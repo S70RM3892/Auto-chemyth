@@ -4,11 +4,17 @@
 import { Game, sellValue, XP_NEED, ODDS, DIFFS, MAX_LEVEL } from './game.js';
 import { UNITS, TRAITS, ITEMS, COMPS, FULL_ITEMS, BY_COST, STAR_HP, STAR_AD, NEUTRAL, traitTier, fmt, combine } from './data.js';
 import { COLS, ROWS, TICK, MOVE_T, TIME_LIMIT } from './combat.js';
+import { installFigures, figure, auraOf, TRAIT_ICON } from './figures.js';
+import { LORE, titleOf } from './lore.js';
 
 const $ = s => document.querySelector(s);
 const el = (tag, cls, html) => { const e = document.createElement(tag); if (cls) e.className = cls; if (html != null) e.innerHTML = html; return e; };
 const SHORT = { NG: 'ﾆﾄﾛ', AcOH: 'CH₃COOH' };
-const COSTCOL = ['#5c4a4a', '#8d99ae', '#3fb96b', '#3d8bfd', '#b05cff', '#ffb703'];
+const COSTCOL = ['#8a6a5a', '#9aa5b8', '#3fcf7a', '#4a95ff', '#b968ff', '#ffc23d'];
+const TOK_VB = '16 7 68 68', CARD_VB = '6 2 88 88';
+const RM = window.matchMedia ? matchMedia('(prefers-reduced-motion: reduce)') : { matches: false };
+const seen = new Set(); let seenOn = false; // 購入演出用：既に表示したユニット
+installFigures();
 
 let G = null, me = null, hexW = 60, hexH = 69, speed = 1, bt = null /*表示中の戦闘*/, btEls = new Map(), raf = 0;
 let planEnd = 0, planDur = 0, timerId = 0, drag = null, opts = { diff: 'normal', timer: true };
@@ -18,7 +24,7 @@ const cellXY = (c, r) => [c * hexW + (r & 1 ? hexW / 2 : 0) + hexW / 2, r * hexH
 function layout() {
   const b0 = $('#board'); b0.style.width = b0.style.height = '0px';
   const w = $('#boardWrap'), W = w.clientWidth, H = w.clientHeight;
-  hexW = Math.max(30, Math.min(W / 7.5, H / 7.22, 88)); hexH = hexW * 1.1547;
+  hexW = Math.max(30, Math.min(W / 7.8, H / 7.5, 88)); hexH = hexW * 1.1547;
   document.documentElement.style.setProperty('--hw', hexW + 'px');
   const b = $('#board'); b.style.width = hexW * 7.5 + 'px'; b.style.height = hexH * 6.25 + 'px';
   const cells = $('#cells'); cells.innerHTML = '';
@@ -32,12 +38,12 @@ function layout() {
 }
 
 // ---------- トークン ----------
-function fsize(s) { const n = [...s].length; return n <= 2 ? .3 : n <= 4 ? .24 : n === 5 ? .2 : n <= 7 ? .15 : .13; }
+function fsize(s) { const n = [...s].length; return n <= 2 ? .22 : n <= 4 ? .2 : n === 5 ? .18 : n <= 7 ? .165 : .15; }
 function mkToken(id, star, items, team, bars) {
   const d = UNITS[id], f = SHORT[id] || d.f;
   const t = el('div', `token c${d.cost} t${team}`);
   t.innerHTML = (bars ? '<div class="bars"><div class="bar hp"><i class="h"></i><i class="s"></i></div><div class="bar mp"><i></i></div></div>' : '') +
-    `<div class="body"><span class="f" style="--fs:${fsize(f)}">${f}</span></div>` +
+    `<div class="body">${figure(id, 'fig', TOK_VB)}</div><div class="np" style="--fs:${fsize(f)}">${f}</div>` +
     (d.mob ? '' : `<div class="stars s${star}">${'★'.repeat(star)}</div>`) +
     `<div class="its">${(items || []).map(i => `<span>${ITEMS[i].ic}</span>`).join('')}</div>` + (bars ? '<div class="tag"></div>' : '');
   return t;
@@ -45,14 +51,15 @@ function mkToken(id, star, items, team, bars) {
 function place(t, c, r) { const [x, y] = cellXY(c, r); t.style.transform = `translate(${x}px,${y}px)`; }
 
 // ---------- 描画 ----------
+const isNew = u => { const n = !seen.has(u.uid); seen.add(u.uid); return n && seenOn; };
 function render() { renderTop(); renderTraits(); renderBoard(); renderBench(); renderItems(); renderShop(); renderScore(); }
 
 function renderTop() {
   $('#stageLbl').textContent = G.label;
-  const pve = G.isPvE(); $('#roundKind').textContent = pve ? '実験' : '対戦'; $('#roundKind').style.background = pve ? '#2d5a3a' : '#5a2d3a';
+  const pve = G.isPvE(); $('#roundKind').textContent = pve ? '実験' : '対戦'; $('#roundKind').className = pve ? 'pve' : 'pvp';
   const ph = G.phase;
-  $('#phaseLbl').textContent = ph === 'plan' ? (pve ? '準備フェーズ ｜ 不純物を取り除け' : `準備フェーズ ｜ 次の相手: ${G.opponent ? G.opponent.name : '?'}`) : ph === 'combat' ? '戦闘中' : '結果';
-  $('#btnGo').disabled = ph !== 'plan'; $('#btnGo').textContent = ph === 'plan' ? '戦闘開始' : '戦闘中…';
+  $('#phaseLbl').textContent = ph === 'plan' ? (pve ? '召喚準備 ｜ 実験：不純物を取り除け' : `召喚準備 ｜ 次の相手: ${G.opponent ? G.opponent.name : '?'}`) : ph === 'combat' ? '反応中' : '判定';
+  $('#btnGo').disabled = ph !== 'plan'; $('#btnGo').textContent = ph === 'plan' ? '反応開始' : '反応中…';
   $('#app').classList.toggle('plan', ph === 'plan');
   $('#oppTag').textContent = ph === 'plan' ? '' : (bt && bt.oppName ? '▲ ' + bt.oppName : '');
   const n = me.board.length, mx = G.maxUnits(me), cap = $('#capTag');
@@ -67,7 +74,7 @@ function renderTraits() {
   for (const { k, c, t } of list) {
     const T = TRAITS[k], d = el('div', 'trait' + (t ? ' act' : ''));
     d.style.setProperty('--tc', T.col);
-    d.innerHTML = `<div class="ic">${T.ic}</div><div><div class="nm">${T.n}</div><div class="bp">${T.bp.map((b, i) => (i === t - 1 ? `<b class="on">${b}</b>` : b)).join(' / ')}</div></div><div class="ct">${c}</div>`;
+    d.innerHTML = `<div class="ic">${TRAIT_ICON[k]}</div><div><div class="nm">${T.n}</div><div class="bp">${T.bp.map((b, i) => (i === t - 1 ? `<b class="on">${b}</b>` : b)).join(' / ')}</div></div><div class="ct">${c}</div>`;
     d.onclick = e => { e.stopPropagation(); showTraitInfo(k, t); };
     box.appendChild(d);
   }
@@ -79,8 +86,8 @@ function renderBoard(force) {
   const box = $('#tokens'); box.innerHTML = ''; btEls.clear();
   for (const u of me.board) {
     const t = mkToken(u.id, u.star, u.items, 0); t.dataset.uid = u.uid; t.dataset.c = u.c; t.dataset.r = u.r;
-    if (u.justMerged && Date.now() - u.justMerged < 800) t.classList.add('merge');
-    place(t, u.c, 4 + u.r); box.appendChild(t);
+    if (u.justMerged && Date.now() - u.justMerged < 800) t.classList.add('merge'); else if (isNew(u)) t.classList.add('enter');
+    seen.add(u.uid); place(t, u.c, 4 + u.r); box.appendChild(t);
   }
 }
 
@@ -88,7 +95,7 @@ function renderBench() {
   const row = $('#benchRow'); row.innerHTML = '';
   me.bench.forEach((u, i) => {
     const s = el('div', 'slot'); s.dataset.drop = 'bench'; s.dataset.i = i;
-    if (u) { const t = mkToken(u.id, u.star, u.items, 0); t.dataset.uid = u.uid; if (u.justMerged && Date.now() - u.justMerged < 800) t.classList.add('merge'); s.appendChild(t); }
+    if (u) { const t = mkToken(u.id, u.star, u.items, 0); t.dataset.uid = u.uid; if (u.justMerged && Date.now() - u.justMerged < 800) t.classList.add('merge'); else if (isNew(u)) t.classList.add('enter'); seen.add(u.uid); s.appendChild(t); }
     row.appendChild(s);
   });
 }
@@ -105,9 +112,7 @@ function renderShop() {
     if (!id) { box.appendChild(el('div', 'card empty')); return; }
     const d = UNITS[id], own = G.allUnits(me).filter(u => u.id === id), n1 = own.filter(u => u.star === 1).length;
     const c = el('div', `card c${d.cost}` + (own.length ? ' own' : '') + (n1 % 3 === 2 ? ' own3' : '') + (G.canBuy(me, i) ? '' : ' no'));
-    c.innerHTML = `<div class="fm" style="font-size:${[...(SHORT[id] || d.f)].length > 5 ? 12 : ''}px">${SHORT[id] || d.f}</div><div class="nm">${d.n}</div>` +
-      `<div class="trs">${d.traits.map(t => `<span class="${cnt[t] ? 'act' : ''}" style="color:${cnt[t] ? '' : TRAITS[t].col}">${TRAITS[t].n}</span>`).join('')}</div>` +
-      `<div class="cost">${d.cost}G</div><div class="i">i</div>`;
+    c.innerHTML = cardHtml(id, cnt) + '<div class="i">i</div>';
     c.onclick = e => {
       e.stopPropagation();
       if (e.target.classList.contains('i')) return showUnitInfo(id, 1, []);
@@ -137,8 +142,16 @@ function renderScore() {
   }
 }
 
+// 標本カード（ショップ・図鑑共通）
+function cardHtml(id, cnt = {}) {
+  const d = UNITS[id], f = SHORT[id] || d.f, n = [...f].length;
+  return `<div class="art" style="--au:${auraOf(id)}">${figure(id, 'fig', CARD_VB)}</div><div class="cost">${d.cost}</div>` +
+    `<div class="meta"><span class="fm${n > 5 ? ' long' : ''}">${f}</span><span class="nm">${d.n}</span></div>` +
+    `<div class="trs">${d.traits.map(t => `<span class="${cnt[t] ? 'act' : ''}" style="--tc:${TRAITS[t].col}" title="${TRAITS[t].n}">${TRAIT_ICON[t]}<em>${TRAITS[t].n}</em></span>`).join('')}</div>`;
+}
+
 // ---------- 情報パネル ----------
-const chip = t => `<span class="chip" style="--tc:${TRAITS[t].col}">${TRAITS[t].n}</span>`;
+const chip = t => `<span class="chip" style="--tc:${TRAITS[t].col}">${TRAIT_ICON[t]}${TRAITS[t].n}</span>`;
 function showInfo(html) { const i = $('#info'); i.innerHTML = '<span class="x">✕</span>' + html; i.hidden = false; i.querySelector('.x').onclick = hideInfo; }
 function hideInfo() { $('#info').hidden = true; }
 function skillHtml(d, star) {
@@ -149,8 +162,10 @@ function showUnitInfo(id, star, items, live) {
   const d = UNITS[id], sm = star - 1;
   const st = live ? [Math.ceil(live.hp) + '/' + Math.round(live.maxHp), Math.round(live.ad), bt.asEff(live).toFixed(2), Math.round(bt.armorEff(live)), Math.round(bt.mrEff(live)), live.range, live.ap]
     : [Math.round(d.hp * STAR_HP[sm]), Math.round(d.ad * STAR_AD[sm]), d.as.toFixed(2), d.armor, d.mr, d.range, 100];
-  showInfo(`<h3>${d.n} <span class="fm">${d.f}</span><span class="costc">${d.mob ? '' : d.cost + 'G ' + '★'.repeat(star)}</span></h3>
-    <div class="chips">${d.traits.map(chip).join('')}</div>
+  showInfo(`<div class="uhead"><div class="medal c${d.cost}" style="--au:${auraOf(id)}">${figure(id)}</div><div class="uh">
+    <h3>${d.n}</h3><div class="fmrow"><span class="fm">${d.f}</span><span class="costc">${d.mob ? '実験試料' : d.cost + 'G ' + '★'.repeat(star)}</span></div>
+    <div class="chips">${d.traits.map(chip).join('')}</div></div></div>
+    ${LORE[id] ? `<div class="lore">${LORE[id]}</div>` : ''}
     <div class="stats"><span>HP <b>${st[0]}</b></span><span>攻撃力 <b>${st[1]}</b></span><span>攻速 <b>${st[2]}</b></span><span>アーマー <b>${st[3]}</b></span><span>魔法耐性 <b>${st[4]}</b></span><span>射程 <b>${st[5]}</b></span><span>スキル威力 <b>${st[6]}</b></span></div>
     ${skillHtml(d, star)}
     ${(items || []).map(i => `<div class="itl">${ITEMS[i].ic} <b>${ITEMS[i].n}</b>：${ITEMS[i].d}</div>`).join('')}
@@ -158,11 +173,11 @@ function showUnitInfo(id, star, items, live) {
 }
 function showTraitInfo(k, tier) {
   const T = TRAITS[k], us = Object.values(UNITS).filter(u => u.traits.includes(k)).sort((a, b) => a.cost - b.cost);
-  showInfo(`<h3><span class="chip" style="--tc:${T.col}">${T.n}</span> <span class="fm">${T.bp.join(' / ')}体</span></h3>
+  showInfo(`<h3>${chip(k)} <span class="fm">${T.bp.join(' / ')}体</span></h3>
     <div style="margin-top:6px">${fmt(T.d, T.v, tier)}</div>
     ${k === 'acid' || k === 'base' ? `<div class="eq">【中和】H⁺ + OH⁻ → H₂O ：${NEUTRAL.flat}＋最大HPの${NEUTRAL.pct}%の魔法ダメージ（中和熱）</div>` : ''}
     <div class="note">📝 ${T.why}</div>
-    <div class="chips" style="margin-top:8px">${us.map(u => `<span class="chip" style="--tc:${COSTCOL[u.cost]}">${SHORT[u.id] || u.f}</span>`).join('')}</div>`);
+    <div class="minis">${us.map(u => `<span class="mini c${u.cost}" title="${u.n}">${figure(u.id, 'fig', TOK_VB)}<b>${SHORT[u.id] || u.f}</b></span>`).join('')}</div>`);
 }
 function showItemInfo(id) {
   const it = ITEMS[id];
@@ -173,12 +188,13 @@ function showItemInfo(id) {
 }
 
 function toast(s) { const t = el('div', '', s); $('#toast').appendChild(t); setTimeout(() => t.remove(), 2600); }
-function modal(html) { $('#modalBox').innerHTML = html; $('#modal').hidden = false; }
+function modal(html, cls = '') { const b = $('#modalBox'); b.className = cls; b.innerHTML = html; b.scrollTop = 0; $('#modal').hidden = false; }
 function closeModal() { $('#modal').hidden = true; }
 
 function showScout(p) {
   const cnt = G.traits(p), act = Object.keys(cnt).filter(k => traitTier(k, cnt[k])).sort((a, b) => cnt[b] - cnt[a]);
   modal(`<h2>${p.name} <small style="color:var(--mut)">Lv.${p.level}　HP ${p.hp}　💰${p === me ? p.gold : '?'}</small></h2>
+    ${p === me ? '<div class="rtitle">あなたの実験卓</div>' : titleOf(p.name) ? `<div class="rtitle">「${titleOf(p.name)}」</div>` : ''}
     <div class="chips row">${act.map(k => `<span class="chip" style="--tc:${TRAITS[k].col}">${TRAITS[k].n} ${cnt[k]}</span>`).join('') || '<span style="color:var(--mut)">発動中のシナジーなし</span>'}</div>
     <div class="scout" id="scoutBox"></div><div class="row"><button id="mClose">閉じる</button></div>`);
   const box = $('#scoutBox');
@@ -193,9 +209,9 @@ function showDex(tab = 'how') {
   const tabs = { how: '遊び方', units: '物質', traits: 'シナジー', items: '器具', odds: '確率' };
   let body = '';
   if (tab === 'how') body = `
-    <p><b>Auto-Chemyth</b> は、元素や化合物を集めて盤面に並べ、7人のライバル化学者と自動で戦わせる化学オートバトラーです。</p>
+    <p><b>Auto-Chemyth</b> は、元素や化合物の<b>化身</b>を集めて六角の反応場「元素盤」に召喚し、7人のライバル化学者と自動で戦わせる化学オートバトラーです。</p>
     <h4>基本の流れ</h4>
-    <p>① ショップで物質を買う（同じ物質が3つそろうと ★ が上がる＝精製）<br>② ベンチから盤面の下半分にドラッグして配置（配置数＝レベル）<br>③「戦闘開始」で自動戦闘。負けると生き残った敵の数に応じてHPが減る<br>④ 最後の1人になれば勝ち</p>
+    <p>① ショップで物質を買う（同じ物質が3つそろうと ★ が上がる＝精製）<br>② ベンチから盤面の下半分にドラッグして配置（配置数＝レベル）<br>③「反応開始」で自動戦闘。負けると生き残った敵の数に応じてHPが減る<br>④ 最後の1人になれば勝ち</p>
     <h4>化学のルール</h4>
     <p>・同じ<b>族・性質</b>の物質を並べるとシナジー発動（アルカリ金属、ハロゲン、酸、塩基、酸化剤…）<br>
     ・<b>中和</b>：酸が付けた H⁺ と塩基が付けた OH⁻ が同じ敵に重なると中和熱で大ダメージ<br>
@@ -205,9 +221,9 @@ function showDex(tab = 'how') {
     ・各物質のスキルは実際の反応式に基づく。タップで反応式と受験メモを確認できる</p>
     <h4>経済</h4>
     <p>毎ラウンド5G＋利息（10Gごとに+1、最大5）＋連勝/連敗ボーナス。経験値は4Gで4XP、リロードは2G。ユニットをショップ欄へドラッグで売却。</p>
-    <h4>操作</h4><p>ドラッグ：移動・装備・売却　／　タップ：詳細　／　キー：<b>D</b> リロード・<b>F</b> 経験値・<b>Space</b> 戦闘開始</p>`;
-  if (tab === 'units') body = [1, 2, 3, 4, 5].map(c => `<h4>コスト${c}</h4><div class="dex">${BY_COST[c - 1].map(id => { const d = UNITS[id]; return `<div class="card c${c}" data-id="${id}"><div class="fm" style="font-size:13px">${SHORT[id] || d.f}</div><div class="nm">${d.n}</div><div class="trs">${d.traits.map(t => `<span style="color:${TRAITS[t].col}">${TRAITS[t].n}</span>`).join('')}</div></div>`; }).join('')}</div>`).join('');
-  if (tab === 'traits') body = Object.values(TRAITS).map(T => `<div class="dexT" style="--tc:${T.col}"><b style="color:${T.col}">${T.n}</b>（${T.bp.join('/')}）<br>${fmt(T.d, T.v)}<div class="why">📝 ${T.why}</div></div>`).join('') +
+    <h4>操作</h4><p>ドラッグ：移動・装備・売却　／　タップ：詳細　／　キー：<b>D</b> リロード・<b>F</b> 経験値・<b>Space</b> 反応開始</p>`;
+  if (tab === 'units') body = [1, 2, 3, 4, 5].map(c => `<h4>コスト${c}</h4><div class="dex">${BY_COST[c - 1].map(id => `<div class="card c${c}" data-id="${id}">${cardHtml(id)}</div>`).join('')}</div>`).join('');
+  if (tab === 'traits') body = Object.values(TRAITS).map(T => `<div class="dexT" style="--tc:${T.col}"><b style="color:${T.col}"><span class="dic">${TRAIT_ICON[T.id]}</span>${T.n}</b>（${T.bp.join('/')}）<br>${fmt(T.d, T.v)}<div class="why">📝 ${T.why}</div></div>`).join('') +
     `<div class="dexT" style="--tc:#fff36b"><b style="color:#fff36b">中和</b><br>H⁺ と OH⁻ が同じユニットに重なると両方が消え、${NEUTRAL.flat}＋最大HPの${NEUTRAL.pct}%の魔法ダメージ。<div class="why">📝 H⁺ + OH⁻ → H₂O　ΔH = −56.5 kJ/mol（強酸・強塩基なら種類によらず一定）</div></div>`;
   if (tab === 'items') body = `<h4>素材</h4><div class="recipe">${COMPS.map(c => `<div>${ITEMS[c].ic} <b>${ITEMS[c].n}</b><br>${ITEMS[c].d}</div>`).join('')}</div><h4>完成品（素材2つを同じユニットに装備）</h4><div class="recipe">${FULL_ITEMS.map(k => { const it = ITEMS[k]; return `<div>${it.r.map(c => ITEMS[c].ic).join('＋')} → ${it.ic} <b>${it.n}</b><br>${it.d}</div>`; }).join('')}</div>`;
   if (tab === 'odds') body = `<p>レベルごとのショップ出現率(%)</p><table class="odds"><tr><th>Lv</th>${[1, 2, 3, 4, 5].map(c => `<th style="color:${COSTCOL[c]}">${c}G</th>`).join('')}</tr>${ODDS.slice(1).map((o, i) => `<tr${me && me.level === i + 1 ? ' style="background:#2a5fd055"' : ''}><td>${i + 1}</td>${o.map(x => `<td>${x}</td>`).join('')}</tr>`).join('')}</table>`;
@@ -218,12 +234,18 @@ function showDex(tab = 'how') {
 }
 
 function showStart() {
-  modal(`<h2>⚗️ Auto-Chemyth <small style="color:var(--mut);font-size:12px">化学オートバトラー</small></h2>
-    <p>41種の元素・化合物を集め、族と性質のシナジーを組み、実際の化学反応に基づくスキルで7人のライバル化学者に勝ち残れ。</p>
-    <p>酸と塩基で<b>中和</b>、塩酸は<b>イオン化傾向</b>で特効、鉄は濃硝酸に<b>不動態</b>、金は<b>王水</b>でしか溶けない——盤面の強さはそのまま化学の知識になる。</p>
-    <div class="row"><span>難易度</span><span class="seg" id="segDiff">${Object.keys(DIFFS).map(k => `<button data-v="${k}" class="${k === opts.diff ? 'on' : ''}">${DIFFS[k].n}</button>`).join('')}</span></div>
-    <div class="row"><span>準備時間</span><span class="seg" id="segTimer"><button data-v="1" class="${opts.timer ? 'on' : ''}">制限あり</button><button data-v="0" class="${opts.timer ? '' : 'on'}">じっくり（無制限）</button></span></div>
-    <div class="row"><button class="primary" id="mStart" style="padding:10px 26px;font-size:15px">実験開始</button><button id="mHow">遊び方・図鑑</button></div>`);
+  const parade = ['Li', 'Cl2', 'C6H6', 'Au', 'Aqua', 'Ne', 'KMnO4'];
+  const tiles = [['1', 'H', '水素'], ['6', 'C', '炭素'], ['8', 'O', '酸素'], ['79', 'Au', '金']];
+  modal(`<div class="ttl">
+    <div class="tiles">${tiles.map(([z, s, n]) => `<span class="etile"><i>${z}</i><b>${s}</b><em>${n}</em></span>`).join('')}</div>
+    <div class="logo"><div class="pre">化学アカデミー ・ 元素盤</div><h1>Auto<span>-</span>Chemyth</h1><div class="sub">化身たちの反応場</div></div>
+    <div class="parade">${parade.map((id, i) => `<div class="pm c${UNITS[id].cost}" style="--au:${auraOf(id)};--i:${i}">${figure(id, 'fig', TOK_VB)}</div>`).join('')}</div>
+    <p class="intro">化学アカデミーの奥に据えられた六角の反応場「元素盤」。化学者たちは物質の<b>化身</b>を召喚し、族と性質の共鳴を組み上げ、実際の化学反応で相手の実験を崩していく。最後まで盤上に残った反応系だけが勝者となる。</p>
+    <p class="intro sm">酸と塩基で<b>中和</b>、塩酸は<b>イオン化傾向</b>で特効、鉄は濃硝酸に<b>不動態</b>、金は<b>王水</b>でしか溶けない——盤面の強さは、そのまま化学の知識になる。</p>
+    <div class="opts"><div class="row"><span class="ol">難易度</span><span class="seg" id="segDiff">${Object.keys(DIFFS).map(k => `<button data-v="${k}" class="${k === opts.diff ? 'on' : ''}">${DIFFS[k].n}</button>`).join('')}</span></div>
+    <div class="row"><span class="ol">準備時間</span><span class="seg" id="segTimer"><button data-v="1" class="${opts.timer ? 'on' : ''}">制限あり</button><button data-v="0" class="${opts.timer ? '' : 'on'}">じっくり（無制限）</button></span></div></div>
+    <div class="row go"><button class="primary big" id="mStart">実験開始</button><button id="mHow">遊び方・図鑑</button></div>
+    <div class="foot">41種の化身 ・ 14の族と性質 ・ 7人のライバル化学者</div></div>`, 'titleBox');
   const seg = (id, fn) => $(id).querySelectorAll('button').forEach(b => b.onclick = () => { $(id).querySelectorAll('button').forEach(x => x.classList.remove('on')); b.classList.add('on'); fn(b.dataset.v); });
   seg('#segDiff', v => { opts.diff = v; }); seg('#segTimer', v => { opts.timer = v === '1'; });
   $('#mStart').onclick = () => { closeModal(); newGame(); };
@@ -237,10 +259,13 @@ function showAug() {
 
 function showOver() {
   const p = G.place, win = p === 1;
-  modal(`<h2>${win ? '🏆 優勝！' : `実験終了：${p}位`}</h2>
-    <p>${win ? 'すべてのライバルを退けた。君の反応系は完璧だ。' : p <= 4 ? '上位入賞。シナジーの段階をもう一つ上げれば優勝が見える。' : '序盤は連敗しても利息で立て直せる。★2を作ってから盤面を広げよう。'}</p>
-    <p>到達ラウンド ${G.label}　／　最終レベル ${me.level}</p>
-    <div class="row"><button class="primary" id="mAgain">もう一度</button></div>`);
+  const best = me.board.slice().sort((a, b) => UNITS[b.id].cost * b.star - UNITS[a.id].cost * a.star).slice(0, 5);
+  modal(`<div class="over ${win ? 'win' : ''}"><div class="place">${win ? '🏆' : p + '<small>位</small>'}</div>
+    <h2>${win ? '元素盤の覇者' : '実験終了'}</h2>
+    <p>${win ? 'すべてのライバルの実験を退け、あなたの反応系だけが盤上に残った。アカデミーの記録に、その名が刻まれる。' : p <= 4 ? '上位入賞。シナジーの段階をもう一つ上げれば、元素盤の頂が見える。' : '反応系は崩れた。だが失敗も記録になる。序盤は連敗しても利息で立て直せる——★2を作ってから盤面を広げよう。'}</p>
+    <div class="minis">${best.map(u => `<span class="mini c${UNITS[u.id].cost}">${figure(u.id, 'fig', TOK_VB)}<b>${SHORT[u.id] || UNITS[u.id].f}${'★'.repeat(u.star)}</b></span>`).join('')}</div>
+    <p class="mut">到達ラウンド ${G.label}　／　最終レベル ${me.level}</p>
+    <div class="row go"><button class="primary big" id="mAgain">もう一度</button></div></div>`, 'overBox');
   $('#mAgain').onclick = () => showStart();
 }
 
@@ -248,11 +273,13 @@ function showOver() {
 function newGame() {
   cancelAnimationFrame(raf); clearInterval(timerId); bt = null;
   G = new Game(opts); me = G.me; window.__G = G;
-  render(); layout(); enterPlan();
+  seen.clear(); seenOn = false; render(); seenOn = true; layout(); enterPlan();
 }
 function enterPlan() {
   bt = null; $('#banner').classList.remove('show'); $('#fx').innerHTML = '';
   render();
+  const pve = G.isPvE(), o = G.opponent;
+  stageFx(`ROUND ${G.label}`, pve ? '実験ラウンド ― 不純物を取り除け' : o ? `次の対戦：${o.name}${titleOf(o.name) ? `「${titleOf(o.name)}」` : ''}` : '');
   if (G.pendingAug) showAug(); else startTimer();
 }
 function startTimer() {
@@ -269,7 +296,7 @@ function go() {
   clearInterval(timerId); cancelDrag(); hideInfo();
   const f = G.myFight(), ghost = f && f.ghost;
   G.startCombat(); bt = G.battle; bt.oppName = G.opponent ? G.opponent.name + (ghost ? '（影）' : '') : '実験：不純物';
-  render(); buildBattleTokens();
+  render(); buildBattleTokens(); stageFx('反応開始', bt.oppName, 'go');
   let last = performance.now(), acc = 0, done = false;
   const loop = now => {
     let dt = Math.min(0.1, (now - last) / 1000) * speed; last = now; acc += dt;
@@ -283,14 +310,20 @@ function go() {
 }
 function endCombat() {
   G.finishCombat(); const r = G.lastResult, b = $('#banner');
-  b.innerHTML = (r.win ? '<span style="color:#7df9ff">勝利！</span>' : r.draw ? '<span style="color:#ffd166">時間切れ</span>' : '<span style="color:#ff5d73">敗北</span>') + (r.dmg ? `<small>−${r.dmg} HP</small>` : '');
-  b.classList.add('show');
+  b.className = r.win ? 'win' : r.draw ? 'draw' : 'lose';
+  b.innerHTML = `<span class="bt">${r.win ? '勝利' : r.draw ? '時間切れ' : '敗北'}</span><small>${r.win ? '反応系は盤上に残った' : r.draw ? '反応は平衡に達した' : '反応系が崩れた'}${r.dmg ? `　−${r.dmg} HP` : ''}</small>`;
+  void b.offsetWidth; b.classList.add('show');
   if (r.loot && r.loot.items) toast('入手：' + r.loot.items.map(i => ITEMS[i].ic + ITEMS[i].n).join('　') + (r.loot.gold ? `　💰+${r.loot.gold}` : ''));
   render();
   setTimeout(() => { if (G.over) { showOver(); return; } G.nextRound(); enterPlan(); }, 1700);
 }
 
 // ---------- 戦闘描画 ----------
+function stageFx(main, sub, cls = '') {
+  const s = $('#stageFx'); if (!s) return;
+  s.className = ''; s.innerHTML = `<b>${main}</b>${sub ? `<small>${sub}</small>` : ''}`;
+  void s.offsetWidth; s.className = 'show ' + cls;
+}
 function buildBattleTokens() {
   const box = $('#tokens'); box.innerHTML = ''; btEls.clear();
   for (const u of bt.units) {
@@ -339,7 +372,7 @@ function playEvents() {
       case 'text': { const [x, y] = unitXY(e.u); ftext(x, y - hexW * .5, e.s, e.col, e.big ? 'big' : '', 900); break; }
       case 'cast': {
         const [x, y] = unitXY(e.u); ftext(x, y - hexW * .62, e.s, '#7df9ff', 'skill', 1100);
-        const b = btEls.get(e.u.uid); if (b) b.body.animate([{ transform: 'scale(1)' }, { transform: 'scale(1.35)', boxShadow: '0 0 18px #7df9ff' }, { transform: 'scale(1)' }], { duration: 350 / sp });
+        const b = btEls.get(e.u.uid); if (b && !RM.matches) b.body.animate([{ transform: 'scale(1)' }, { transform: 'scale(1.35)', boxShadow: '0 0 18px #7df9ff' }, { transform: 'scale(1)' }], { duration: 350 / sp });
         break;
       }
       case 'atk': {
@@ -350,7 +383,7 @@ function playEvents() {
           p.animate([{ transform: `translate(${ax}px,${ay}px)` }, { transform: `translate(${bx}px,${by}px)` }], { duration: 150 / sp }).onfinish = () => p.remove();
         } else {
           const b = btEls.get(e.a.uid), dx = (bx - ax) * .28, dy = (by - ay) * .28;
-          if (b) b.body.animate([{ transform: 'translate(0,0)' }, { transform: `translate(${dx}px,${dy}px)` }, { transform: 'translate(0,0)' }], { duration: 170 / sp });
+          if (b && !RM.matches) b.body.animate([{ transform: 'translate(0,0)' }, { transform: `translate(${dx}px,${dy}px)` }, { transform: 'translate(0,0)' }], { duration: 170 / sp });
         }
         break;
       }

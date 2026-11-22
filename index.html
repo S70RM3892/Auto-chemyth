@@ -3,18 +3,19 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
-<meta name="theme-color" content="#0b1020">
+<meta name="theme-color" content="#0a0f17">
+<meta name="description" content="化学アカデミーの元素盤で、物質の化身を召喚して戦う化学オートバトラー">
 <title>Auto-Chemyth ｜ 化学オートバトラー</title>
 <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
 <div id="app">
   <header id="top">
-    <div class="brand">Auto<b>Chemyth</b></div>
+    <div class="brand"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2 21 7v10l-9 5-9-5V7z" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M10 6v5l-3.5 6.5A1.4 1.4 0 0 0 7.7 19.5h8.6a1.4 1.4 0 0 0 1.2-2L14 11V6" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M8.2 16h7.6l1 2H7.2z" fill="currentColor"/></svg>Auto<b>Chemyth</b></div>
     <div id="stageBox"><span id="stageLbl">1-1</span><span id="roundKind"></span></div>
     <div id="phaseBox"><span id="phaseLbl"></span><div id="timerBar"><i></i></div></div>
     <div id="topBtns">
-      <button id="btnGo" class="primary">戦闘開始</button>
+      <button id="btnGo" class="primary">反応開始</button>
       <button id="btnSpeed" title="戦闘速度">×1</button>
       <button id="btnDex" title="図鑑">図鑑</button>
     </div>
@@ -29,6 +30,7 @@
           <div id="tokens"></div>
           <div id="fx"></div>
           <div id="banner"></div>
+          <div id="stageFx"></div>
           <div id="oppTag"></div>
           <div id="capTag"></div>
         </div>
