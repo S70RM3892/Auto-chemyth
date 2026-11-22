@@ -272,11 +272,22 @@ def('Dia', { // 無色透明の共有結合の結晶：ブリリアントカッ�
   hair: '',
   front: spark(16, 22, 7, '#ffffff') + spark(84, 30, 5, '#ffffff') + spark(80, 86, 4, '#d8fbff') + spark(20, 80, 3.5, '#d8fbff'),
 });
-def('Aqua', { // 王水（濃硝酸:濃塩酸=1:3）。橙黄色：泡立つフラスコが金を溶かす
-  c: ['#ffe08a', '#f39c12', '#a0520a'], body: 'none', head: 'none', eye: 'sharp', ec: '#7a2a00', mouth: 'fang', aura: '#ffb000', eyeY: 52,
-  back: L('M46 18 C40 10 50 4 44 -4', '#ffb000', 4, 'opacity=".7"') + L('M56 16 C62 8 54 2 60 -6', '#ff8c00', 3.5, 'opacity=".6"'),
-  hair: P('M42 16 L58 16 L58 40 C74 46 84 58 84 72 C84 90 68 100 50 100 C32 100 16 90 16 72 C16 58 26 46 42 40Z', '#e4eef8d0') + P('M17 62 C28 58 40 66 50 62 C60 58 72 66 83 62 C84 66 84 70 84 72 C84 90 68 100 50 100 C32 100 16 90 16 72 C16 68 16 66 17 62Z', 'url(#Aqua_b)', NS) + P('M42 16 L58 16 L58 40 C74 46 84 58 84 72 C84 90 68 100 50 100 C32 100 16 90 16 72 C16 58 26 46 42 40Z', 'none') + `<rect x="39" y="12" width="22" height="6" rx="2" fill="#dfe8f2" ${st(1.6)}/>` + L('M24 54 C21 60 21 70 24 78', '#ffffff99', 2.6) + bubble(40, 50, 3, '#fff6d0') + bubble(60, 46, 2.4, '#fff6d0') + bubble(68, 58, 2.8, '#fff6d0'),
-  front: P('M62 76 L69 72 L76 76 L74 82 L64 82Z', '#ffd700', `stroke="${LN}" stroke-width="1.4"`) + L('M66 82 C66 85 68 86 68 88', '#ffd700', 1.6) + C(72, 70, 1.3, '#ffe066', NS) + C(60, 72, 1, '#ffe066', NS),
+def('Aqua', { // 王水（濃硝酸:濃塩酸=1:3）。橙黄色の液を湛えた丸底フラスコに、「王」の金冠が沈み溶けていく
+  // 40px ほどのトークンでも名札に隠れないよう、金冠・ガラス・橙の液面と顔を上半分に集める
+  c: ['#ffe58a', '#f7a21b', '#b8590a'], body: 'none', head: 'none', eye: 'sharp', ec: '#6a2200', mouth: 'fang', aura: '#ffb000', eyeY: 53,
+  back: L('M22 46 C15 38 22 31 16 23', '#ff9a1a', 3.6, 'opacity=".75"') + L('M78 46 C85 38 78 31 84 23', '#ff7a00', 3.2, 'opacity=".65"'),
+  hair: P('M42 23 L58 23 L58 30.3 A25 25 0 1 1 42 30.3 Z', '#eef5fc') // ガラスの丸底フラスコ
+    + P('M27.1 44 C38 40.5 45 47 51 44 C57 41 64 46.5 72.9 44 A25 25 0 1 1 27.1 44 Z', 'url(#Aqua_a)', NS) // 橙黄色の王水
+    + P('M42 23 L58 23 L58 30.3 A25 25 0 1 1 42 30.3 Z', 'none')
+    + L('M30 48 C27.5 55 28 63 31 69', '#ffffffcc', 2.8) + L('M45 27 L45 33', '#ffffffaa', 1.8)
+    + L('M44 27 L44 38.5', '#ffd700', 3.8) + C(44, 41.5, 2.5, '#ffd700', `stroke="${LN}" stroke-width="1"`) // 溶けて落ちる金
+    + L('M56.5 27 L56.5 35', '#ffd700', 3) + C(56.5, 37.5, 2, '#ffd700', `stroke="${LN}" stroke-width=".9"`)
+    + `<g transform="rotate(-9 50 19)">` + P('M29 29 L28 11 L39.5 19.5 L50 7 L60.5 19.5 L72 11 L71 29 Z', '#ffd23a', `stroke="${LN}" stroke-width="2.2"`) // 金冠（王）
+    + P('M29 29 L71 29 L71.4 23 L28.6 23 Z', '#e0a60c', `stroke="${LN}" stroke-width="1.7"`)
+    + C(50, 26, 2.5, '#ff3b5c', `stroke="${LN}" stroke-width="1"`) + C(38.5, 26, 1.7, '#3bc4ff', NS) + C(61.5, 26, 1.7, '#3bc4ff', NS)
+    + L('M34 15.5 L35 21 M50 12 L50 19', '#fff6c4', 1.8) + `</g>`,
+  front: bubble(37, 69, 2.6, '#fff6d0') + bubble(65, 63, 3, '#fff6d0') + bubble(58, 72, 2, '#fff6d0')
+    + C(46, 47.5, 1.3, '#fff1a6', NS) + C(56, 49, 1.1, '#fff1a6', NS) + C(37, 51, 1, '#fff1a6', NS), // 溶け込んだ金のきらめき
 });
 def('Nylon', { // 白色の合成繊維（ポリアミド）：糸の髪と糸巻き
   c: ['#ffffff', '#f6f3ec', '#c9c2b2'], body: 'robe', head: 'round', eye: 'calm', ec: '#9a8f7a', mouth: 'smile', aura: '#ffffff',

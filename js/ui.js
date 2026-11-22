@@ -2,13 +2,19 @@
 //  UI（描画・ドラッグ操作・戦闘演出）
 // ============================================================
 import { Game, sellValue, XP_NEED, ODDS, DIFFS, MAX_LEVEL } from './game.js';
-import { UNITS, TRAITS, ITEMS, COMPS, FULL_ITEMS, BY_COST, STAR_HP, STAR_AD, NEUTRAL, traitTier, fmt, combine } from './data.js';
-import { COLS, ROWS, TICK, MOVE_T, TIME_LIMIT } from './combat.js';
+import { UNITS, TRAITS, ITEMS, COMPS, FULL_ITEMS, BY_COST, STAR_HP, STAR_AD, NEUTRAL, AUGS, traitTier, fmt, combine } from './data.js';
+import { COLS, ROWS, TICK, MOVE_T, TIME_LIMIT, Battle } from './combat.js';
 import { installFigures, figure, auraOf, TRAIT_ICON } from './figures.js';
 import { LORE, titleOf } from './lore.js';
+import { applyIntent } from './intents.js';
+import { Session, savedName, saveName } from './net/session.js';
+import { normCode, cleanName, NAME_MAX } from './net/proto.js';
 
 const $ = s => document.querySelector(s);
 const el = (tag, cls, html) => { const e = document.createElement(tag); if (cls) e.className = cls; if (html != null) e.innerHTML = html; return e; };
+// 通信で届く文字列（とくにプレイヤー名）は必ずエスケープしてから innerHTML に入れる
+const ESC = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
+const esc = v => String(v == null ? '' : v).replace(/[&<>"']/g, c => ESC[c]);
 const SHORT = { NG: 'ﾆﾄﾛ', AcOH: 'CH₃COOH' };
 const COSTCOL = ['#8a6a5a', '#9aa5b8', '#3fcf7a', '#4a95ff', '#b968ff', '#ffc23d'];
 const TOK_VB = '16 7 68 68', CARD_VB = '6 2 88 88';
@@ -18,15 +24,27 @@ installFigures();
 
 let G = null, me = null, hexW = 60, hexH = 69, speed = 1, bt = null /*表示中の戦闘*/, btEls = new Map(), raf = 0;
 let planEnd = 0, planDur = 0, timerId = 0, drag = null, opts = { diff: 'normal', timer: true };
+// オンライン: net=Session。G は影のGame（表示・予測用）、me はその中の自分の席。flip=自分がチーム1の戦闘を180°回して描く
+let mode = 'solo', net = null, flip = false, deferred = false, augOpen = false, keys = {}, replay = null;
+const online = () => mode === 'online';
+const AUG_N = Object.fromEntries(AUGS.map(a => [a.id, a.n]));
+/** プレイヤー操作。ソロは直接適用、オンラインは予測＋ホストへ送信 */
+const act = it => (online() ? net.act(it) : applyIntent(G, me, it));
 
 // ---------- 座標 ----------
 const cellXY = (c, r) => [c * hexW + (r & 1 ? hexW / 2 : 0) + hexW / 2, r * hexH * 0.75 + hexH / 2];
+const NARROW = window.matchMedia ? matchMedia('(max-width: 860px)') : { matches: false };
 function layout() {
   const b0 = $('#board'); b0.style.width = b0.style.height = '0px';
-  const w = $('#boardWrap'), W = w.clientWidth, H = w.clientHeight;
+  const w = $('#boardWrap'); w.style.flex = '';
+  const W = w.clientWidth, H = w.clientHeight;
   hexW = Math.max(30, Math.min(W / 7.8, H / 7.5, 88)); hexH = hexW * 1.1547;
+  // スマホで縦に余裕があれば、六角を少しだけ縦長にして盤面を大きく使う（最大8%）
+  if (NARROW.matches) hexH = Math.max(hexH, Math.min(hexH * 1.08, (H - hexW * .2 - 12) / 6.25));
   document.documentElement.style.setProperty('--hw', hexW + 'px');
   const b = $('#board'); b.style.width = hexW * 7.5 + 'px'; b.style.height = hexH * 6.25 + 'px';
+  // スマホ（幅で盤面サイズが決まる）では、盤面の枠を盤面の高さに縮めて余白を下の器具棚に回す
+  if (NARROW.matches) { const need = Math.ceil(hexH * 6.25 + hexW * .2 + 12); if (H - need > 4) w.style.flex = `0 0 ${need}px`; }
   const cells = $('#cells'); cells.innerHTML = '';
   for (let r = 0; r < ROWS; r++) for (let c = 0; c < COLS; c++) {
     const [x, y] = cellXY(c, r), d = el('div', 'cell ' + (r >= 4 ? 'me' : 'en'));
@@ -49,6 +67,13 @@ function mkToken(id, star, items, team, bars) {
   return t;
 }
 function place(t, c, r) { const [x, y] = cellXY(c, r); t.style.transform = `translate(${x}px,${y}px)`; }
+// 戦闘座標 → 画面座標。flip 時は盤面を180°回転（odd-r の六角格子では (c,r)→(6-c,7-r) がちょうど点対称）
+const bxy = (c, r) => (flip ? cellXY(COLS - 1 - c, ROWS - 1 - r) : cellXY(c, r));
+// 名札が化身より横に広いときは横方向に縮めて収める
+function fitPlates(root) {
+  const m = [...root.querySelectorAll('.token .np')].map(n => [n, n.offsetWidth, n.parentElement.offsetWidth]);
+  for (const [n, w, tw] of m) n.style.setProperty('--sx', w > tw && tw > 0 ? (tw / w).toFixed(3) : '1');
+}
 
 // ---------- 描画 ----------
 const isNew = u => { const n = !seen.has(u.uid); seen.add(u.uid); return n && seenOn; };
@@ -58,9 +83,15 @@ function renderTop() {
   $('#stageLbl').textContent = G.label;
   const pve = G.isPvE(); $('#roundKind').textContent = pve ? '実験' : '対戦'; $('#roundKind').className = pve ? 'pve' : 'pvp';
   const ph = G.phase;
-  $('#phaseLbl').textContent = ph === 'plan' ? (pve ? '召喚準備 ｜ 実験：不純物を取り除け' : `召喚準備 ｜ 次の相手: ${G.opponent ? G.opponent.name : '?'}`) : ph === 'combat' ? '反応中' : '判定';
-  $('#btnGo').disabled = ph !== 'plan'; $('#btnGo').textContent = ph === 'plan' ? '反応開始' : '反応中…';
+  $('#phaseLbl').textContent = !me.alive ? `脱落（${me.place}位）｜ 観戦中` : ph === 'plan' ? (pve ? '召喚準備 ｜ 実験：不純物を取り除け' : `召喚準備 ｜ 次の相手: ${G.opponent ? G.opponent.name : '?'}`) : ph === 'combat' ? '反応中' : '判定';
+  const bg = $('#btnGo');
+  if (online()) { // 準備完了：生存中で接続中の人間が全員押したらホストが戦闘を始める
+    const hs = G.players.filter(p => p.human && p.alive && !p.away), rd = hs.filter(p => p.ready).length;
+    bg.disabled = ph !== 'plan' || !me.alive; bg.classList.toggle('ready', !!me.ready && ph === 'plan');
+    bg.textContent = ph !== 'plan' ? '反応中…' : (me.ready ? '準備完了 ✓ ' : '準備完了 ') + `${rd}/${hs.length}`;
+  } else { bg.disabled = ph !== 'plan'; bg.classList.remove('ready'); bg.textContent = ph === 'plan' ? '反応開始' : '反応中…'; }
   $('#app').classList.toggle('plan', ph === 'plan');
+  $('#app').classList.toggle('spectate', !me.alive);
   $('#oppTag').textContent = ph === 'plan' ? '' : (bt && bt.oppName ? '▲ ' + bt.oppName : '');
   const n = me.board.length, mx = G.maxUnits(me), cap = $('#capTag');
   cap.textContent = `配置 ${n}/${mx}`; cap.className = n > mx ? 'over' : n < mx && me.bench.some(Boolean) ? 'under' : '';
@@ -89,6 +120,7 @@ function renderBoard(force) {
     if (u.justMerged && Date.now() - u.justMerged < 800) t.classList.add('merge'); else if (isNew(u)) t.classList.add('enter');
     seen.add(u.uid); place(t, u.c, 4 + u.r); box.appendChild(t);
   }
+  fitPlates(box);
 }
 
 function renderBench() {
@@ -98,6 +130,7 @@ function renderBench() {
     if (u) { const t = mkToken(u.id, u.star, u.items, 0); t.dataset.uid = u.uid; if (u.justMerged && Date.now() - u.justMerged < 800) t.classList.add('merge'); else if (isNew(u)) t.classList.add('enter'); seen.add(u.uid); s.appendChild(t); }
     row.appendChild(s);
   });
+  fitPlates(row);
 }
 
 function renderItems() {
@@ -116,7 +149,7 @@ function renderShop() {
     c.onclick = e => {
       e.stopPropagation();
       if (e.target.classList.contains('i')) return showUnitInfo(id, 1, []);
-      if (G.buy(me, i)) render(); else toast(me.gold < d.cost ? 'ゴールドが足りない' : 'ベンチが満員');
+      if (act({ t: 'buy', slot: i })) render(); else toast(!me.alive ? '観戦中' : me.gold < d.cost ? 'ゴールドが足りない' : 'ベンチが満員');
     };
     box.appendChild(c);
   });
@@ -134,9 +167,10 @@ function renderScore() {
   const box = $('#score'); box.innerHTML = '';
   const ps = G.players.slice().sort((a, b) => b.alive - a.alive || b.hp - a.hp || a.place - b.place);
   for (const p of ps) {
-    const d = el('div', 'pl' + (p === me ? ' me' : '') + (p.alive ? '' : ' dead') + (p === G.opponent && G.phase !== 'result' ? ' opp' : ''));
+    const d = el('div', 'pl' + (p === me ? ' me' : '') + (p.alive ? '' : ' dead') + (p === G.opponent && G.phase !== 'result' ? ' opp' : '') + (online() && p.human ? ' hu' : '') + (p.away ? ' away' : ''));
     const s = p.streak;
-    d.innerHTML = `<span class="lv">Lv${p.level}</span><span class="nm">${p.name}</span><span class="stk">${s >= 2 ? '🔥' + s : s <= -2 ? '❄️' + -s : ''}</span><span class="hp">${p.alive ? p.hp : p.place + '位'}</span><i class="hpb" style="width:${p.hp}%;background:${p.hp > 50 ? '#3fb96b' : p.hp > 25 ? '#ffb703' : '#ff5d73'}"></i>`;
+    d.title = p.name + (online() && p.human ? (p.away ? '（離席中：AIが代行）' : '（プレイヤー）') : '');
+    d.innerHTML = `<span class="lv">Lv${p.level}</span><span class="nm">${esc(p.name)}</span>${p.away ? '<span class="aw">AI</span>' : ''}<span class="stk">${s >= 2 ? '🔥' + s : s <= -2 ? '❄️' + -s : ''}</span><span class="hp">${p.alive ? p.hp : p.place + '位'}</span><i class="hpb" style="width:${p.hp}%;background:${p.hp > 50 ? '#3fb96b' : p.hp > 25 ? '#ffb703' : '#ff5d73'}"></i>`;
     d.onclick = e => { e.stopPropagation(); showScout(p); };
     box.appendChild(d);
   }
@@ -193,8 +227,8 @@ function closeModal() { $('#modal').hidden = true; }
 
 function showScout(p) {
   const cnt = G.traits(p), act = Object.keys(cnt).filter(k => traitTier(k, cnt[k])).sort((a, b) => cnt[b] - cnt[a]);
-  modal(`<h2>${p.name} <small style="color:var(--mut)">Lv.${p.level}　HP ${p.hp}　💰${p === me ? p.gold : '?'}</small></h2>
-    ${p === me ? '<div class="rtitle">あなたの実験卓</div>' : titleOf(p.name) ? `<div class="rtitle">「${titleOf(p.name)}」</div>` : ''}
+  modal(`<h2>${esc(p.name)} <small style="color:var(--mut)">Lv.${p.level}　HP ${p.hp}　💰${p === me ? p.gold : '?'}</small></h2>
+    ${p === me ? '<div class="rtitle">あなたの実験卓</div>' : !p.human && titleOf(p.name) ? `<div class="rtitle">「${titleOf(p.name)}」</div>` : ''}
     <div class="chips row">${act.map(k => `<span class="chip" style="--tc:${TRAITS[k].col}">${TRAITS[k].n} ${cnt[k]}</span>`).join('') || '<span style="color:var(--mut)">発動中のシナジーなし</span>'}</div>
     <div class="scout" id="scoutBox"></div><div class="row"><button id="mClose">閉じる</button></div>`);
   const box = $('#scoutBox');
@@ -202,6 +236,7 @@ function showScout(p) {
     const t = mkToken(u.id, u.star, u.items, p === me ? 0 : 1); t.onclick = () => showUnitInfo(u.id, u.star, u.items); box.appendChild(t);
   }
   if (!p.board.length) box.textContent = '盤面は空';
+  else requestAnimationFrame(() => fitPlates(box));
   $('#mClose').onclick = closeModal;
 }
 
@@ -242,48 +277,66 @@ function showStart() {
     <div class="parade">${parade.map((id, i) => `<div class="pm c${UNITS[id].cost}" style="--au:${auraOf(id)};--i:${i}">${figure(id, 'fig', TOK_VB)}</div>`).join('')}</div>
     <p class="intro">化学アカデミーの奥に据えられた六角の反応場「元素盤」。化学者たちは物質の<b>化身</b>を召喚し、族と性質の共鳴を組み上げ、実際の化学反応で相手の実験を崩していく。最後まで盤上に残った反応系だけが勝者となる。</p>
     <p class="intro sm">酸と塩基で<b>中和</b>、塩酸は<b>イオン化傾向</b>で特効、鉄は濃硝酸に<b>不動態</b>、金は<b>王水</b>でしか溶けない——盤面の強さは、そのまま化学の知識になる。</p>
+    <div class="modes">
+      <button class="mode primary" id="mSolo"><b>ソロ</b><small>7人のライバルAIと対戦</small></button>
+      <button class="mode" id="mOnline"><b>オンライン</b><small>友だちとルームで対戦</small></button>
+    </div>
     <div class="opts"><div class="row"><span class="ol">難易度</span><span class="seg" id="segDiff">${Object.keys(DIFFS).map(k => `<button data-v="${k}" class="${k === opts.diff ? 'on' : ''}">${DIFFS[k].n}</button>`).join('')}</span></div>
     <div class="row"><span class="ol">準備時間</span><span class="seg" id="segTimer"><button data-v="1" class="${opts.timer ? 'on' : ''}">制限あり</button><button data-v="0" class="${opts.timer ? '' : 'on'}">じっくり（無制限）</button></span></div></div>
-    <div class="row go"><button class="primary big" id="mStart">実験開始</button><button id="mHow">遊び方・図鑑</button></div>
-    <div class="foot">41種の化身 ・ 14の族と性質 ・ 7人のライバル化学者</div></div>`, 'titleBox');
-  const seg = (id, fn) => $(id).querySelectorAll('button').forEach(b => b.onclick = () => { $(id).querySelectorAll('button').forEach(x => x.classList.remove('on')); b.classList.add('on'); fn(b.dataset.v); });
+    <div class="row go"><button id="mHow">遊び方・図鑑</button></div>
+    <div class="foot">41種の化身 ・ 14の族と性質 ・ 最大8人で対戦</div></div>`, 'titleBox');
   seg('#segDiff', v => { opts.diff = v; }); seg('#segTimer', v => { opts.timer = v === '1'; });
-  $('#mStart').onclick = () => { closeModal(); newGame(); };
+  $('#mSolo').onclick = () => { closeModal(); newGame(); };
+  $('#mOnline').onclick = () => showOnline();
   $('#mHow').onclick = () => { showDex('how'); const c = $('#mClose'); c.onclick = () => { hideInfo(); showStart(); }; };
 }
+function seg(id, fn) { $(id).querySelectorAll('button').forEach(b => b.onclick = () => { $(id).querySelectorAll('button').forEach(x => x.classList.remove('on')); b.classList.add('on'); fn(b.dataset.v); }); }
 
 function showAug() {
-  modal(`<h2>🔬 研究テーマを選ぶ</h2><p>このゲーム中ずっと有効な強化を1つ選択。</p><div class="augs">${G.pendingAug.map((a, i) => `<div class="aug" data-i="${i}"><div class="ic">${a.ic}</div><div class="n">${a.n}</div><div class="d">${a.d}</div></div>`).join('')}</div>`);
-  $('#modalBox').querySelectorAll('.aug').forEach(a => a.onclick = () => { G.chooseAug(+a.dataset.i); closeModal(); render(); startTimer(); });
+  augOpen = true;
+  modal(`<h2>🔬 研究テーマを選ぶ</h2><p>このゲーム中ずっと有効な強化を1つ選択。${online() ? '<br><small class="mut">準備時間内に選ばないと自動で選ばれます。</small>' : ''}</p><div class="augs">${G.pendingAug.map((a, i) => `<div class="aug" data-i="${i}"><div class="ic">${a.ic}</div><div class="n">${a.n}</div><div class="d">${a.d}</div></div>`).join('')}</div>`);
+  $('#modalBox').querySelectorAll('.aug').forEach(a => a.onclick = () => {
+    if (!act({ t: 'aug', i: +a.dataset.i })) return;
+    augOpen = false; closeModal(); render(); if (!online()) startTimer();
+  });
 }
+function closeAug() { if (augOpen) { augOpen = false; closeModal(); } }
 
 function showOver() {
   const p = G.place, win = p === 1;
   const best = me.board.slice().sort((a, b) => UNITS[b.id].cost * b.star - UNITS[a.id].cost * a.star).slice(0, 5);
+  const ranks = online() ? `<div class="ranks">${G.players.slice().sort((a, b) => (a.place || 9) - (b.place || 9)).map(q => `<div class="rk${q === me ? ' me' : ''}${q.human ? ' hu' : ''}"><b>${q.place || '-'}</b><span>${esc(q.name)}</span>${q.human ? `<em>${q.away ? '離席' : 'プレイヤー'}</em>` : '<em>AI</em>'}</div>`).join('')}</div>` : '';
   modal(`<div class="over ${win ? 'win' : ''}"><div class="place">${win ? '🏆' : p + '<small>位</small>'}</div>
     <h2>${win ? '元素盤の覇者' : '実験終了'}</h2>
     <p>${win ? 'すべてのライバルの実験を退け、あなたの反応系だけが盤上に残った。アカデミーの記録に、その名が刻まれる。' : p <= 4 ? '上位入賞。シナジーの段階をもう一つ上げれば、元素盤の頂が見える。' : '反応系は崩れた。だが失敗も記録になる。序盤は連敗しても利息で立て直せる——★2を作ってから盤面を広げよう。'}</p>
+    ${ranks}
     <div class="minis">${best.map(u => `<span class="mini c${UNITS[u.id].cost}">${figure(u.id, 'fig', TOK_VB)}<b>${SHORT[u.id] || UNITS[u.id].f}${'★'.repeat(u.star)}</b></span>`).join('')}</div>
     <p class="mut">到達ラウンド ${G.label}　／　最終レベル ${me.level}</p>
-    <div class="row go"><button class="primary big" id="mAgain">もう一度</button></div></div>`, 'overBox');
-  $('#mAgain').onclick = () => showStart();
+    <div class="row go"><button class="primary big" id="mAgain">${online() ? 'タイトルへ' : 'もう一度'}</button></div></div>`, 'overBox');
+  $('#mAgain').onclick = () => { if (online()) leaveOnline(); else showStart(); };
 }
 
-// ---------- 進行 ----------
+// ---------- 進行（ソロ） ----------
 function newGame() {
-  cancelAnimationFrame(raf); clearInterval(timerId); bt = null;
+  cancelAnimationFrame(raf); clearInterval(timerId); bt = null; flip = false; mode = 'solo'; speed = 1; syncTopBtns();
   G = new Game(opts); me = G.me; window.__G = G;
   seen.clear(); seenOn = false; render(); seenOn = true; layout(); enterPlan();
 }
 function enterPlan() {
+  if (online()) return enterPlanOnline();
   bt = null; $('#banner').classList.remove('show'); $('#fx').innerHTML = '';
   render();
   const pve = G.isPvE(), o = G.opponent;
-  stageFx(`ROUND ${G.label}`, pve ? '実験ラウンド ― 不純物を取り除け' : o ? `次の対戦：${o.name}${titleOf(o.name) ? `「${titleOf(o.name)}」` : ''}` : '');
+  stageFx(`ROUND ${G.label}`, pve ? '実験ラウンド ― 不純物を取り除け' : o ? `次の対戦：${esc(o.name)}${!o.human && titleOf(o.name) ? `「${titleOf(o.name)}」` : ''}` : '');
   if (G.pendingAug) showAug(); else startTimer();
 }
 function startTimer() {
   clearInterval(timerId); const bar = $('#timerBar i');
+  if (online()) { // ホストが決めた締め切りまでの残り時間を表示するだけ（締め切りの判定はホスト）
+    planDur = G.planTime() * 1000;
+    const tick = () => { bar.style.width = Math.max(0, (net.client.deadline - performance.now()) / planDur * 100) + '%'; };
+    tick(); timerId = setInterval(tick, 100); return;
+  }
   if (!opts.timer) { bar.style.width = '100%'; return; }
   planDur = G.planTime() * 1000; planEnd = performance.now() + planDur;
   timerId = setInterval(() => {
@@ -292,30 +345,215 @@ function startTimer() {
   }, 100);
 }
 function go() {
+  if (online()) { if (G && G.phase === 'plan' && me.alive) { act({ t: 'ready', on: !me.ready }); renderTop(); } return; }
   if (!G || G.phase !== 'plan' || !$('#modal').hidden && G.pendingAug) return;
   clearInterval(timerId); cancelDrag(); hideInfo();
   const f = G.myFight(), ghost = f && f.ghost;
   G.startCombat(); bt = G.battle; bt.oppName = G.opponent ? G.opponent.name + (ghost ? '（影）' : '') : '実験：不純物';
-  render(); buildBattleTokens(); stageFx('反応開始', bt.oppName, 'go');
+  render(); buildBattleTokens(); stageFx('反応開始', esc(bt.oppName), 'go');
+  playBattle(() => setTimeout(endCombat, 900));
+}
+// 戦闘の再生（ソロ・オンライン共通）。オンラインは常に ×1
+function playBattle(onEnd) {
+  cancelAnimationFrame(raf);
   let last = performance.now(), acc = 0, done = false;
   const loop = now => {
+    if (!bt) return;
     let dt = Math.min(0.1, (now - last) / 1000) * speed; last = now; acc += dt;
     while (acc >= TICK && !bt.over) { bt.step(TICK); acc -= TICK; }
     playEvents(); updateTokens();
     $('#timerBar i').style.width = Math.max(0, (1 - bt.t / TIME_LIMIT) * 100) + '%';
-    if (bt.over && !done) { done = true; setTimeout(endCombat, 900); return; }
+    if (bt.over && !done) { done = true; onEnd(); return; }
     raf = requestAnimationFrame(loop);
   };
   raf = requestAnimationFrame(loop);
 }
-function endCombat() {
-  G.finishCombat(); const r = G.lastResult, b = $('#banner');
+function showBanner(r) {
+  const b = $('#banner');
   b.className = r.win ? 'win' : r.draw ? 'draw' : 'lose';
   b.innerHTML = `<span class="bt">${r.win ? '勝利' : r.draw ? '時間切れ' : '敗北'}</span><small>${r.win ? '反応系は盤上に残った' : r.draw ? '反応は平衡に達した' : '反応系が崩れた'}${r.dmg ? `　−${r.dmg} HP` : ''}</small>`;
   void b.offsetWidth; b.classList.add('show');
   if (r.loot && r.loot.items) toast('入手：' + r.loot.items.map(i => ITEMS[i].ic + ITEMS[i].n).join('　') + (r.loot.gold ? `　💰+${r.loot.gold}` : ''));
+}
+function endCombat() {
+  G.finishCombat(); showBanner(G.lastResult);
   render();
   setTimeout(() => { if (G.over) { showOver(); return; } G.nextRound(); enterPlan(); }, 1700);
+}
+
+// ---------- オンライン：ロビー ----------
+const REJECT = { notfound: 'ルームが見つかりません。コードを確認してください', full: 'ルームが満員です（最大8人）', started: 'このルームはすでにゲームが始まっています', ended: 'このルームのゲームは終了しています' };
+function roomLink(code) {
+  const q = new URLSearchParams({ room: code }); if (net && net.kind === 'local') q.set('net', 'local');
+  return location.origin + location.pathname + '?' + q;
+}
+function setUrl(code) {
+  const q = new URLSearchParams(location.search);
+  if (code) q.set('room', code); else q.delete('room');
+  const s = q.toString(); history.replaceState(null, '', location.pathname + (s ? '?' + s : ''));
+}
+function showOnline(code = '', err = '') {
+  modal(`<div class="ttl online">
+    <div class="logo"><div class="pre">化学アカデミー ・ 元素盤</div><h2>オンライン対戦</h2></div>
+    <p class="intro sm">友だちとルームを作って対戦します。2〜8人で遊べて、空いた席はライバルAIが埋めるので常に8人で戦います。</p>
+    ${err ? `<div class="err">${esc(err)}</div>` : ''}
+    <div class="ofield"><label for="oName">表示名</label><input id="oName" maxlength="${NAME_MAX}" autocomplete="nickname" placeholder="例：アボガドロ好き" value="${esc(savedName())}"></div>
+    <div class="ocards">
+      <div class="ocard"><h4>ルームを作る</h4><p class="mut">ホストになり、招待リンクを友だちに送る</p><button class="${code ? '' : 'primary '}big" id="oCreate">ルームを作る</button></div>
+      <div class="ocard"><h4>コードで参加</h4><p class="mut">友だちから聞いた5文字のコード</p><div class="jrow"><input id="oCode" maxlength="5" autocapitalize="characters" autocomplete="off" spellcheck="false" placeholder="ABCDE" value="${esc(code)}"><button class="${code ? 'primary ' : ''}" id="oJoin">参加</button></div></div>
+    </div>
+    <div class="row go"><button id="oBack">戻る</button></div></div>`, 'titleBox');
+  const name = () => { const n = cleanName($('#oName').value); if (!n) { toast('表示名を入力してください'); $('#oName').focus(); return null; } saveName(n); return n; };
+  const busy = on => { for (const id of ['#oCreate', '#oJoin', '#oBack']) $(id).disabled = on; };
+  $('#oBack').onclick = () => { setUrl(null); showStart(); };
+  $('#oCreate').onclick = async () => {
+    const n = name(); if (!n) return;
+    busy(true); $('#oCreate').textContent = '接続中…';
+    try { net = await Session.create(n, onNet); window.__net = net; setUrl(net.code); showLobby(); }
+    catch (e) { net = null; showOnline('', netError(e)); }
+  };
+  const join = async () => {
+    const n = name(); if (!n) return;
+    const c = normCode($('#oCode').value); if (!c) { toast('コードは5文字です（英数字）'); return; }
+    busy(true); $('#oJoin').textContent = '接続中…';
+    try { net = await Session.join(c, n, onNet); window.__net = net; setUrl(c); showLobby(); }
+    catch (e) { net = null; showOnline(c, netError(e)); }
+  };
+  $('#oJoin').onclick = join;
+  $('#oCode').onkeydown = e => { if (e.key === 'Enter') join(); };
+}
+const netError = e => (e && e.message && /[ぁ-んァ-ン]/.test(e.message) ? e.message : '接続できませんでした。通信環境を確認してください');
+
+function showLobby() {
+  const lb = net.client.lobby, me_ = net.cid, host = net.isHost;
+  const mem = lb ? lb.members : [];
+  const link = roomLink(net.code);
+  const seats = [];
+  for (let i = 0; i < 8; i++) {
+    const m = mem[i];
+    seats.push(m ? `<div class="mem${m.cid === me_ ? ' me' : ''}"><span class="no">${i + 1}</span><span class="nm">${esc(m.name)}</span>${lb && m.cid === lb.host ? '<span class="badge">ホスト</span>' : ''}${m.cid === me_ ? '<span class="you">あなた</span>' : ''}</div>`
+      : `<div class="mem ai"><span class="no">${i + 1}</span><span class="nm">ライバルAI</span></div>`);
+  }
+  const diff = lb ? lb.diff : 'normal';
+  modal(`<div class="lobby">
+    <div class="lhead"><span class="mut">ルームコード</span><span class="code" id="lCode">${esc(net.code)}</span></div>
+    <div class="share"><input id="lLink" readonly value="${esc(link)}"><button id="lCopy">リンクをコピー</button></div>
+    ${!lb ? '<p class="mut wait">ホストに接続しています…</p>' : ''}
+    <h4>参加者 ${mem.length}/8 <small class="mut">（空き席はライバルAI）</small></h4>
+    <div class="mems">${seats.join('')}</div>
+    <div class="row"><span class="ol">AIの強さ</span>${host ? `<span class="seg" id="lDiff">${Object.keys(DIFFS).map(k => `<button data-v="${k}" class="${k === diff ? 'on' : ''}">${DIFFS[k].n}</button>`).join('')}</span>` : `<b>${DIFFS[diff] ? DIFFS[diff].n : ''}</b>`}</div>
+    <p class="mut">準備時間はホストが管理します（全員が「準備完了」を押すと早く始まります）。</p>
+    <div class="row go">${host ? `<button class="primary big" id="lStart" ${mem.length < 2 ? 'disabled' : ''}>開始</button>` : '<span class="wait">ホストの開始を待っています…</span>'}<button id="lLeave">退出</button></div>
+    ${host && mem.length < 2 ? '<p class="mut c">リンクを送って、もう1人以上が参加すると開始できます。</p>' : ''}
+  </div>`, 'titleBox lobbyBox');
+  $('#lCopy').onclick = () => copyText(link);
+  $('#lLink').onclick = e => e.target.select();
+  $('#lLeave').onclick = () => leaveOnline();
+  if (host) {
+    seg('#lDiff', v => net.host.setDiff(v));
+    $('#lStart').onclick = () => { if (!net.host.start()) toast('2人以上で開始できます'); };
+  }
+}
+function copyText(s) {
+  const ok = () => toast('招待リンクをコピーしました');
+  const fallback = () => { const i = $('#lLink'); i.select(); try { document.execCommand('copy'); ok(); } catch { toast('コピーできませんでした。リンクを長押しでコピーしてください'); } };
+  if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(s).then(ok, fallback); else fallback();
+}
+async function leaveOnline(msg) {
+  const n = net; net = null; mode = 'solo'; window.__net = null;
+  cancelAnimationFrame(raf); clearInterval(timerId); bt = null; G = null; me = null; flip = false; augOpen = false; keys = {};
+  $('#tokens').innerHTML = ''; $('#banner').classList.remove('show'); $('#fx').innerHTML = '';
+  setUrl(null); syncTopBtns();
+  if (n) await n.leave();
+  if (msg) { modal(`<div class="over"><h2>ゲーム終了</h2><p>${esc(msg)}</p><div class="row go"><button class="primary big" id="mBack">タイトルへ</button></div></div>`, 'overBox'); $('#mBack').onclick = showStart; }
+  else showStart();
+}
+
+// ---------- オンライン：ゲーム ----------
+function onNet(ev, data) {
+  if (!net) return;
+  switch (ev) {
+    case 'lobby': if (!online()) showLobby(); break;
+    case 'reject': { const m = REJECT[data] || '参加できませんでした'; const c = net.code; net.leave(); net = null; showOnline(c, m); break; }
+    case 'start': startOnline(); break;
+    case 'snap': onSnap(net.client.snap); break;
+    case 'combat': onCombat(data); break;
+    case 'end': if (!(G && G.over)) leaveOnline(data === 'host-left' ? 'ホストが退出したため、このゲームは終了しました。' : 'ホストがゲームを終了しました。'); break;
+  }
+}
+function startOnline() {
+  mode = 'online'; speed = 1; keys = {}; augOpen = false; closeModal(); syncTopBtns();
+  cancelAnimationFrame(raf); clearInterval(timerId); bt = null; flip = false;
+  seen.clear(); seenOn = false;
+  if (net.client.snap) onSnap(net.client.snap);
+}
+function onSnap(s) {
+  if (!net || !net.client.G || !online()) return;
+  const before = me ? new Set(G.allUnits(me).filter(u => u.uid < 0).map(u => u.id + ':' + u.star)) : new Set();
+  G = net.client.G; me = G.me;
+  // 予測で表示済みのユニットが本物のIDで届いたら、登場演出を繰り返さない
+  if (before.size) for (const u of G.allUnits(me)) if (before.has(u.id + ':' + u.star)) seen.add(u.uid);
+  if (drag && drag.on) { deferred = true; return; } // 持っているユニットを手から奪わない：描画は手を離すまで待つ
+  deferred = false;
+  if (!seenOn) { render(); seenOn = true; layout(); }
+  if (augOpen && !me.pendingAug) { closeAug(); const a = AUG_N[me.augs[me.augs.length - 1]]; if (a) toast(`研究テーマ「${a}」を自動選択しました`); }
+  if (s.over) { if (!keys.over) { keys.over = 1; resultOnline(); setTimeout(() => { if (online() && G.over) showOver(); }, 1600); } return; }
+  if (s.phase === 'plan' && keys.plan !== s.label) { keys.plan = s.label; enterPlanOnline(); return; }
+  if (s.phase === 'result' && keys.result !== s.label) { keys.result = s.label; resultOnline(); return; }
+  if (s.phase === 'combat' && keys.combat !== s.label && !bt) { clearInterval(timerId); closeAug(); }
+  render();
+}
+function enterPlanOnline() {
+  cancelAnimationFrame(raf); bt = null; flip = false; replay = null;
+  $('#banner').classList.remove('show'); $('#fx').innerHTML = '';
+  render();
+  const pve = G.isPvE(), o = G.opponent;
+  if (me.alive) stageFx(`ROUND ${G.label}`, pve ? '実験ラウンド ― 不純物を取り除け' : o ? `次の対戦：${esc(o.name)}${!o.human && titleOf(o.name) ? `「${titleOf(o.name)}」` : ''}` : '');
+  else stageFx(`ROUND ${G.label}`, '観戦中');
+  if (me.alive && me.pendingAug && !augOpen) showAug();
+  startTimer();
+}
+function onCombat(m) {
+  if (keys.combat === m.label) return; keys.combat = m.label;
+  clearInterval(timerId); closeAug(); cancelDrag(); hideInfo();
+  const seat = net.seat, f = m.fights.find(x => x.a === seat || (x.b === seat && !x.ghost));
+  if (!f) { render(); stageFx('反応開始', '観戦中', 'go'); return; }
+  flip = f.a !== seat; // 自分がチーム1なら描画だけ180°回す（シミュレーションはホストと同じ向きで作る）
+  bt = new Battle(f.A, f.B, f.seed, true);
+  const opp = f.pve ? null : G.players[flip ? f.a : f.b];
+  bt.oppName = opp ? opp.name + (f.ghost ? '（影）' : '') : '実験：不純物';
+  replay = { label: m.label, f, myTeam: flip ? 1 : 0, checked: false };
+  net.view = { label: m.label, flip, myTeam: replay.myTeam };
+  render(); buildBattleTokens(); stageFx('反応開始', esc(bt.oppName), 'go');
+  playBattle(checkReplay);
+}
+// 手元で再生した戦闘がホストの確定結果と一致するか確認する
+function checkReplay() {
+  if (!replay || replay.checked || !bt || !bt.over) return;
+  replay.checked = true;
+  const surv = bt.units.filter(u => u.alive).map(u => [u.uid, Math.round(u.hp)]), r = replay.f.res;
+  const ok = bt.winner === r.w && JSON.stringify(surv) === JSON.stringify(r.surv);
+  net.replays.push({ label: replay.label, seat: net.seat, myTeam: replay.myTeam, flip, ok, winner: bt.winner, hostWinner: r.w, surv, hostSurv: r.surv, t: +bt.t.toFixed(2) });
+  if (!ok) console.warn('[net] 戦闘の再生がホストの結果と一致しません', replay.label);
+}
+function finishReplay() {
+  if (!bt) return;
+  cancelAnimationFrame(raf);
+  if (!bt.over) { bt.rec = false; while (!bt.over) bt.step(TICK); bt.ev = []; buildBattleTokens(); }
+  checkReplay();
+}
+function resultOnline() {
+  finishReplay();
+  const r = me.lastResult;
+  if (r && bt) showBanner(r);
+  else if (r && r.loot && r.loot.items) toast('入手：' + r.loot.items.map(i => ITEMS[i].ic + ITEMS[i].n).join('　'));
+  if (!me.alive && !keys.dead) { keys.dead = 1; toast(`脱落… ${me.place}位　（最後まで観戦できます）`); }
+  render();
+}
+function syncTopBtns() {
+  $('#btnSpeed').disabled = online(); $('#btnSpeed').textContent = '×' + speed;
+  $('#btnSpeed').title = online() ? 'オンラインでは等速' : '戦闘速度';
+  $('#btnExit').hidden = !online();
 }
 
 // ---------- 戦闘描画 ----------
@@ -327,16 +565,17 @@ function stageFx(main, sub, cls = '') {
 function buildBattleTokens() {
   const box = $('#tokens'); box.innerHTML = ''; btEls.clear();
   for (const u of bt.units) {
-    const t = mkToken(u.def.id, u.star, u.items, u.team, true); t.dataset.bid = u.uid;
+    const t = mkToken(u.def.id, u.star, u.items, flip ? 1 - u.team : u.team, true); t.dataset.bid = u.uid;
     if (!u.alive) t.classList.add('dead');
     box.appendChild(t);
     btEls.set(u.uid, { t, h: t.querySelector('.h'), s: t.querySelector('.s'), m: t.querySelector('.mp i'), tag: t.querySelector('.tag'), body: t.querySelector('.body'), tags: '' });
   }
+  fitPlates(box);
   updateTokens();
 }
 function unitXY(u) {
-  let [x, y] = cellXY(u.pos.c, u.pos.r);
-  if (u.moveT > 0) { const k = u.moveT / MOVE_T, [px, py] = cellXY(u.prev.c, u.prev.r); x += (px - x) * k; y += (py - y) * k; }
+  let [x, y] = bxy(u.pos.c, u.pos.r);
+  if (u.moveT > 0) { const k = u.moveT / MOVE_T, [px, py] = bxy(u.prev.c, u.prev.r); x += (px - x) * k; y += (py - y) * k; }
   return [x, y];
 }
 function updateTokens() {
@@ -379,7 +618,7 @@ function playEvents() {
         const [ax, ay] = unitXY(e.a), [bx, by] = unitXY(e.b);
         if (e.ranged) {
           if (box.childElementCount > 70) break;
-          const p = el('div', 'proj'); p.style.background = e.a.team ? '#ff9aa8' : '#9fd0ff'; box.appendChild(p);
+          const p = el('div', 'proj'); p.style.background = (e.a.team ^ flip) ? '#ff9aa8' : '#9fd0ff'; box.appendChild(p);
           p.animate([{ transform: `translate(${ax}px,${ay}px)` }, { transform: `translate(${bx}px,${by}px)` }], { duration: 150 / sp }).onfinish = () => p.remove();
         } else {
           const b = btEls.get(e.a.uid), dx = (bx - ax) * .28, dy = (by - ay) * .28;
@@ -388,7 +627,7 @@ function playEvents() {
         break;
       }
       case 'aoe': {
-        const [x, y] = cellXY(e.pos.c, e.pos.r), s = (2 * e.r + 1) * hexW, r = el('div', 'ring');
+        const [x, y] = bxy(e.pos.c, e.pos.r), s = (2 * e.r + 1) * hexW, r = el('div', 'ring');
         r.style.cssText = `left:${x}px;top:${y}px;width:${s}px;height:${s}px;--col:${e.col}`; box.appendChild(r);
         r.animate([{ transform: 'translate(-50%,-50%) scale(.2)', opacity: 1 }, { transform: 'translate(-50%,-50%) scale(1)', opacity: 0 }], { duration: 480 / sp, easing: 'ease-out' }).onfinish = () => r.remove();
         break;
@@ -425,22 +664,23 @@ function dropTarget(x, y) {
   return { type: 'sell', el: d };
 }
 document.addEventListener('pointerdown', e => {
-  if (!G || e.button > 0) return;
+  if (!G || !me || e.button > 0 || !me.alive) return;
   const tok = e.target.closest('.token[data-uid]'), item = e.target.closest('.item[data-ii]');
   if (!tok && !item) return;
   if (tok && tok.closest('#modal')) return;
   drag = { x: e.clientX, y: e.clientY, src: tok || item, kind: tok ? 'unit' : 'item', on: false, id: e.pointerId };
-  if (tok) drag.unit = myUnit(tok.dataset.uid); else drag.ii = +item.dataset.ii;
+  if (tok) { drag.unit = myUnit(tok.dataset.uid); drag.uid = +tok.dataset.uid; } else drag.ii = +item.dataset.ii;
 });
 document.addEventListener('pointermove', e => {
   if (!drag || e.pointerId !== drag.id) return;
   if (!drag.on) {
     if (Math.hypot(e.clientX - drag.x, e.clientY - drag.y) < 7) return;
-    if (drag.kind === 'unit' && (!drag.unit || (me.board.includes(drag.unit) && G.phase !== 'plan'))) { drag = null; return; }
+    const u = drag.kind === 'unit' ? myUnit(drag.uid) : null;
+    if (drag.kind === 'unit' && (!u || (me.board.includes(u) && G.phase !== 'plan'))) { drag = null; return; }
     drag.on = true; hideInfo();
     const g = drag.src.cloneNode(true); g.classList.add('ghost'); g.style.transform = ''; g.style.left = g.style.top = '0';
     document.body.appendChild(g); drag.ghost = g; drag.src.classList.add('srcDrag');
-    document.body.classList.add('dragging'); if (drag.kind === 'unit') { document.body.classList.add('dragUnit'); $('#sellHint').textContent = `売却 +${sellValue(drag.unit)}G`; }
+    document.body.classList.add('dragging'); if (drag.kind === 'unit') { document.body.classList.add('dragUnit'); $('#sellHint').textContent = `売却 +${sellValue(u)}G`; }
   }
   drag.ghost.style.left = e.clientX + 'px'; drag.ghost.style.top = e.clientY + 'px';
   document.querySelectorAll('.hover').forEach(x => x.classList.remove('hover'));
@@ -453,29 +693,34 @@ function endPointer(e) {
   const d = drag;
   if (!d.on) { // タップ
     drag = null;
-    if (d.kind === 'unit' && d.unit) showUnitInfo(d.unit.id, d.unit.star, d.unit.items); else if (d.kind === 'item') showItemInfo(me.items[d.ii]);
+    if (d.kind === 'unit' && d.unit) showUnitInfo(d.unit.id, d.unit.star, d.unit.items); else if (d.kind === 'item' && me.items[d.ii]) showItemInfo(me.items[d.ii]);
     return;
   }
   const t = e.type === 'pointercancel' ? null : dropTarget(e.clientX, e.clientY);
   cancelDrag();
-  if (!t) return;
+  drop(d, t);
+  if (deferred && online()) onSnap(net.client.snap); else render(); // ドラッグ中に届いたスナップショットをここで反映
+}
+// 手を離した時点の最新状態でユニットを引き直してから操作する
+function drop(d, t) {
+  if (!t || !G) return;
   if (d.kind === 'item') {
     if (!t.unit) return;
-    const r = G.equip(me, d.ii, t.unit);
+    const r = act({ t: 'equip', ii: d.ii, uid: t.unit.uid });
     if (r === 'full') toast('器具は3つまで'); else if (r === 'combined') toast('合成：' + ITEMS[t.unit.items[t.unit.items.length - 1]].n + ' など');
-    if (G.phase !== 'plan' && me.board.includes(t.unit) && r !== 'full') toast('次の戦闘から有効');
-    render(); return;
+    if (r && G.phase !== 'plan' && me.board.includes(t.unit) && r !== 'full') toast('次の戦闘から有効');
+    return;
   }
-  const u = d.unit, onBoard = me.board.includes(u), plan = G.phase === 'plan';
-  if (t.type === 'sell') { if (onBoard && !plan) return toast('戦闘中の盤面は変更できない'); G.sell(me, u); render(); return; }
+  const u = myUnit(d.uid); if (!u) return;
+  const onBoard = me.board.includes(u), plan = G.phase === 'plan';
+  if (t.type === 'sell') { if (onBoard && !plan) return toast('戦闘中の盤面は変更できない'); act({ t: 'sell', uid: u.uid }); return; }
   if (t.type === 'hex') {
     if (!plan) return toast('戦闘中の盤面は変更できない');
-    if (G.move(me, u, { board: true, c: t.c, r: t.r }) === 'full') toast(`配置上限 ${G.maxUnits(me)} 体（レベルを上げると増える）`);
+    if (act({ t: 'move', uid: u.uid, to: { board: 1, c: t.c, r: t.r } }) === 'full') toast(`配置上限 ${G.maxUnits(me)} 体（レベルを上げると増える）`);
   } else if (t.type === 'bench') {
     if (!plan && (onBoard || (t.unit && me.board.includes(t.unit)))) return toast('戦闘中の盤面は変更できない');
-    G.move(me, u, { bench: t.i });
+    act({ t: 'move', uid: u.uid, to: { bench: t.i } });
   }
-  render();
 }
 document.addEventListener('pointerup', endPointer);
 document.addEventListener('pointercancel', endPointer);
@@ -488,16 +733,24 @@ document.addEventListener('contextmenu', e => e.preventDefault());
 
 // ---------- ボタン ----------
 $('#btnGo').onclick = go;
-$('#btnSpeed').onclick = () => { speed = speed === 1 ? 2 : speed === 2 ? 4 : 1; $('#btnSpeed').textContent = '×' + speed; };
+$('#btnSpeed').onclick = () => { if (online()) return; speed = speed === 1 ? 2 : speed === 2 ? 4 : 1; $('#btnSpeed').textContent = '×' + speed; };
 $('#btnDex').onclick = () => showDex('how');
-$('#btnXP').onclick = () => { if (G.buyXP(me)) render(); };
-$('#btnRoll').onclick = () => { if (G.reroll(me)) render(); };
-$('#btnLock').onclick = () => { me.lock = !me.lock; renderShop(); };
+$('#btnXP').onclick = () => { if (G && act({ t: 'xp' })) render(); };
+$('#btnRoll').onclick = () => { if (G && act({ t: 'roll' })) render(); };
+$('#btnLock').onclick = () => { if (G && act({ t: 'lock', on: !me.lock })) renderShop(); };
+$('#btnExit').onclick = () => {
+  if (!online()) return;
+  modal(`<h2>ルームから退出しますか？</h2><p>${net.isHost ? 'あなたはホストです。退出すると<b>全員のゲームが終了</b>します。' : 'あなたの席は、以後ライバルAIが代行します。同じ端末で同じリンクを開けば、ゲーム中は席に戻れます。'}</p>
+    <div class="row go"><button id="xNo">続ける</button><button class="primary" id="xYes">退出する</button></div>`);
+  $('#xNo').onclick = () => { closeModal(); if (augOpen) showAug(); };
+  $('#xYes').onclick = () => leaveOnline();
+};
 document.addEventListener('keydown', e => {
-  if (!G || !$('#modal').hidden) return;
+  if (!G || !me || !$('#modal').hidden || e.target.closest('input')) return;
   if (e.code === 'KeyD') $('#btnRoll').click(); else if (e.code === 'KeyF') $('#btnXP').click(); else if (e.code === 'Space') { e.preventDefault(); go(); }
 });
 window.addEventListener('resize', layout);
 let roW = 0, roH = 0;
 new ResizeObserver(() => { const w = $('#boardWrap'); if (Math.abs(w.clientWidth - roW) + Math.abs(w.clientHeight - roH) > 2) { roW = w.clientWidth; roH = w.clientHeight; layout(); } }).observe($('#boardWrap'));
-showStart();
+// 招待リンク（?room=CODE）で開いたら参加画面から
+{ const c = normCode(new URLSearchParams(location.search).get('room')); if (c) showOnline(c); else showStart(); }

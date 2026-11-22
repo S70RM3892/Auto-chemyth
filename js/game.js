@@ -22,16 +22,19 @@ export const sellValue = u => { const c = UNITS[u.id].cost, n = 3 ** (u.star - 1
 export const unitPower = u => (UNITS[u.id].cost ** 1.15) * [1, 2.1, 4.8][u.star - 1] * 10 + u.items.length * 9;
 
 export class Game {
+  // opts.seats: 人間の席 [{name}, ...]（先頭から順に席0,1,…）。省略時はソロ（席0のみ人間）
+  // opts.online: true のとき全戦闘を開始時に解決し（ホスト権威）、最後の1人まで続ける
   constructor(opts = {}) {
-    this.opts = Object.assign({ diff: 'normal', timer: true }, opts);
+    this.opts = Object.assign({ diff: 'normal', timer: true, online: false, seats: null }, opts);
     this.pool = {};
     for (let c = 1; c <= 5; c++) for (const id of BY_COST[c - 1]) this.pool[id] = POOL_N[c];
     const names = shuffle(BOT_NAMES.slice());
     this.players = [];
-    for (let i = 0; i < 8; i++) this.players.push(this.newPlayer(i, i === 0 ? 'あなた' : names[i], i !== 0));
+    const seats = this.opts.seats || [{ name: 'あなた' }];
+    for (let i = 0; i < 8; i++) this.players.push(this.newPlayer(i, seats[i] ? seats[i].name : names[i], !seats[i]));
     this.me = this.players[0];
     this.stage = 1; this.round = 0; this.phase = 'init'; this.fights = []; this.battle = null;
-    this.log = []; this.over = false; this.place = 0; this.pendingAug = null; this.lastResult = null;
+    this.log = []; this.over = false; this.place = 0;
     for (const p of this.players) { this.addUnit(p, this.draw(1)); p.gold = 3; }
     this.nextRound();
   }
@@ -39,10 +42,26 @@ export class Game {
   newPlayer(id, name, bot) {
     const p = { id, name, bot, hp: 100, gold: 0, level: 1, xp: 0, board: [], bench: new Array(BENCH).fill(null), items: [],
       shop: [null, null, null, null, null], lock: false, streak: 0, alive: true, augs: [], mods: {}, intCap: 5, rerollCost: 2,
-      extraSlot: 0, dmgCut: 0, lastOpp: -1, place: 0, fav: [] };
+      extraSlot: 0, dmgCut: 0, lastOpp: -1, place: 0, fav: [],
+      human: !bot, away: false, ready: false, pendingAug: null, opp: null, lastResult: null };
     if (bot) { const ks = shuffle(Object.keys(TRAITS)); p.fav = ks.slice(0, 3); }
     return p;
   }
+
+  // ---------- 人間の席（ソロでは席0のみ） ----------
+  get pendingAug() { return this.me.pendingAug; }
+  set pendingAug(v) { this.me.pendingAug = v; }
+  get lastResult() { return this.me.lastResult; }
+  get opponent() { return this.oppOf(this.me); }
+  oppOf(p) { return p && p.opp != null ? this.players[p.opp] : null; }
+  humans() { return this.players.filter(p => p.human); }
+  // 切断した人間はライバルAIが代行する（次の準備フェーズから）
+  takeover(p) {
+    p.bot = true;
+    if (!p.fav.length) p.fav = shuffle(Object.keys(TRAITS)).slice(0, 3);
+    if (p.pendingAug) { this.takeAug(p, pick(p.pendingAug)); p.pendingAug = null; }
+  }
+  resume(p) { p.away = false; p.bot = false; }
 
   // ---------- ラウンド構成 ----------
   roundsIn(stage) { return stage === 1 ? 3 : 6; }
@@ -55,14 +74,15 @@ export class Game {
     const first = this.round === 0;
     this.round++;
     if (this.round > this.roundsIn(this.stage)) { this.stage++; this.round = 1; }
-    this.lastResult = null;
+    for (const p of this.players) { p.lastResult = null; p.ready = false; }
+    for (const p of this.alive()) if (p.human && p.away && !p.bot) this.takeover(p);
     for (const p of this.alive()) {
       if (!first) { this.income(p); this.addXP(p, 2); }
       if (!p.lock || first) this.rollShop(p); p.lock = false;
     }
     if (this.round === 1 && this.stage >= 2 && this.stage <= 4) {
       for (const p of this.alive()) if (p.bot) this.takeAug(p, pick(AUGS.filter(a => !p.augs.includes(a.id))));
-      this.pendingAug = shuffle(AUGS.filter(a => !this.me.augs.includes(a.id))).slice(0, 3);
+      for (const p of this.alive()) if (!p.bot) p.pendingAug = shuffle(AUGS.filter(a => !p.augs.includes(a.id))).slice(0, 3);
     }
     for (const p of this.alive()) if (p.bot) this.botTurn(p);
     this.makeFights();
@@ -76,8 +96,8 @@ export class Game {
     const base = this.stage === 1 ? 3 : 5;
     const interest = Math.min(p.intCap, Math.floor(p.gold / 10));
     const s = Math.abs(p.streak), streak = s >= 5 ? 3 : s >= 4 ? 2 : s >= 2 ? 1 : 0;
-    const bonus = p.bot ? Math.max(0, DIFFS[this.opts.diff].g) : 0;
-    const pen = p.bot && DIFFS[this.opts.diff].g < 0 && this.stage > 1 ? 1 : 0;
+    const bonus = !p.human ? Math.max(0, DIFFS[this.opts.diff].g) : 0;
+    const pen = !p.human && DIFFS[this.opts.diff].g < 0 && this.stage > 1 ? 1 : 0;
     p.lastIncome = { base, interest, streak };
     p.gold += base + interest + streak + bonus - pen;
   }
@@ -92,7 +112,7 @@ export class Game {
     if (a.mods) for (const k in a.mods) p.mods[k] = (p.mods[k] || 0) + a.mods[k];
     if (a.now) a.now(p, this);
   }
-  chooseAug(i) { const a = this.pendingAug && this.pendingAug[i]; if (!a) return; this.takeAug(this.me, a); this.pendingAug = null; }
+  chooseAug(i, p = this.me) { const a = p.pendingAug && p.pendingAug[i]; if (!a) return false; this.takeAug(p, a); p.pendingAug = null; return true; }
   randComp() { return pick(COMPS); }
 
   // ---------- ショップ ----------
@@ -254,21 +274,29 @@ export class Game {
       for (let i = 0; i + 1 < o.length; i += 2) this.fights.push({ a: o[i], b: o[i + 1] });
       if (o.length % 2) { const last = o[o.length - 1]; this.fights.push({ a: last, b: pick(o.filter(x => x !== last)), ghost: true }); }
     }
-    const f = this.myFight();
-    this.opponent = f ? (f.pve ? null : (f.a === this.me ? f.b : f.a)) : null;
+    for (const p of this.players) p.opp = null;
+    for (const f of this.fights) if (!f.pve) { f.a.opp = f.b.id; if (!f.ghost) f.b.opp = f.a.id; }
   }
-  myFight() { return this.fights.find(f => f.a === this.me || (f.b === this.me && !f.ghost)); }
+  fightOf(p) { return this.fights.find(f => f.a === p || (f.b === p && !f.ghost)); }
+  myFight() { return this.fightOf(this.me); }
 
   startCombat() {
     if (this.phase !== 'plan') return;
-    this.autoFill(this.me);
+    for (const p of this.alive()) if (!p.bot) this.autoFill(p);
     this.phase = 'combat';
+    const mf = this.myFight();
     for (const f of this.fights) {
-      const mine = f === this.myFight();
+      const mine = f === mf;
       // 自分の戦闘は常に自分がチーム0(下側)になるようにする
       if (mine && f.b === this.me) { const t = f.a; f.a = f.b; f.b = t; }
       const A = this.teamOf(f.a), B = f.pve ? this.pveTeam() : this.teamOf(f.b);
-      f.battle = new Battle(A, B, rnd(1e9), mine);
+      f.seed = rnd(1e9);
+      if (this.opts.online) { // ホスト権威：全戦闘をここで確定させる（各端末は同じ A,B,seed で再生する）
+        f.A = JSON.parse(JSON.stringify(A)); f.B = JSON.parse(JSON.stringify(B));
+        f.battle = new Battle(f.A, f.B, f.seed, false).run();
+        continue;
+      }
+      f.battle = new Battle(A, B, f.seed, mine);
       if (mine) this.battle = f.battle; else f.battle.run();
     }
   }
@@ -294,7 +322,7 @@ export class Game {
           if (win) p.gold += 1;
           const o = team === 0 ? f.b : f.a; p.lastOpp = o.id;
         }
-        if (p === this.me) this.lastResult = { win, draw: w === null, dmg, opp: f.pve ? '実験' : (team === 0 ? f.b : f.a).name, loot: [] };
+        p.lastResult = { win, draw: w === null, dmg, opp: f.pve ? '実験' : (team === 0 ? f.b : f.a).name, loot: [] };
       };
       res(f.a, 0, true); res(f.b, 1, !f.ghost && !f.pve);
     }
@@ -303,12 +331,12 @@ export class Game {
         const loot = this.loot();
         for (const it of loot.items) p.items.push(it);
         p.gold += loot.gold;
-        if (p === this.me && this.lastResult) this.lastResult.loot = loot;
+        if (p.lastResult) p.lastResult.loot = loot;
         if (p.bot) this.botItems(p);
       }
     }
     // 脱落処理(同時脱落はHPが高かった方が上位)
-    const dead = before.filter(x => x.p.hp <= 0).sort((a, b) => a.hp - b.hp || (a.p.bot ? -1 : 1));
+    const dead = before.filter(x => x.p.hp <= 0).sort((a, b) => a.hp - b.hp || (a.p.human ? 1 : -1));
     let n = this.alive().length;
     for (const { p } of dead) {
       p.alive = false; p.hp = 0; p.place = n--;
@@ -317,7 +345,10 @@ export class Game {
       p.shop = p.shop.map(() => null);
     }
     this.battle = null; this.phase = 'result';
-    if (!this.me.alive) { this.over = true; this.place = this.me.place; }
+    if (this.opts.online) { // オンライン：最後の1人まで順位を決める
+      const al = this.alive();
+      if (al.length <= 1) { this.over = true; if (al[0]) al[0].place = 1; this.place = this.me.place; }
+    } else if (!this.me.alive) { this.over = true; this.place = this.me.place; }
     else if (this.alive().length === 1) { this.over = true; this.place = 1; this.me.place = 1; }
   }
   loot() {
