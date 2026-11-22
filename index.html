@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<meta name="theme-color" content="#0b1020">
+<title>Auto-Chemyth ｜ 化学オートバトラー</title>
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<div id="app">
+  <header id="top">
+    <div class="brand">Auto<b>Chemyth</b></div>
+    <div id="stageBox"><span id="stageLbl">1-1</span><span id="roundKind"></span></div>
+    <div id="phaseBox"><span id="phaseLbl"></span><div id="timerBar"><i></i></div></div>
+    <div id="topBtns">
+      <button id="btnGo" class="primary">戦闘開始</button>
+      <button id="btnSpeed" title="戦闘速度">×1</button>
+      <button id="btnDex" title="図鑑">図鑑</button>
+    </div>
+  </header>
+
+  <main id="main">
+    <aside id="traits"></aside>
+    <section id="center">
+      <div id="boardWrap">
+        <div id="board">
+          <div id="cells"></div>
+          <div id="tokens"></div>
+          <div id="fx"></div>
+          <div id="banner"></div>
+          <div id="oppTag"></div>
+          <div id="capTag"></div>
+        </div>
+      </div>
+      <div id="benchRow"></div>
+      <div id="itemsRow"></div>
+    </section>
+    <aside id="score"></aside>
+  </main>
+
+  <footer id="shopBar" data-drop="sell">
+    <div id="lvBox">
+      <div id="lvLbl"></div>
+      <div id="xpBar"><i></i></div>
+      <button id="btnXP">経験値 <b>4G</b></button>
+      <button id="btnRoll">リロード <b id="rollCost">2G</b></button>
+    </div>
+    <div id="shop"></div>
+    <div id="goldBox">
+      <div id="gold"></div>
+      <div id="incomeLbl"></div>
+      <button id="btnLock" title="ショップを固定">🔓</button>
+    </div>
+    <div id="sellHint"></div>
+  </footer>
+</div>
+
+<div id="info" hidden></div>
+<div id="toast"></div>
+<div id="modal" hidden><div id="modalBox"></div></div>
+<script type="module" src="js/ui.js"></script>
+</body>
+</html>

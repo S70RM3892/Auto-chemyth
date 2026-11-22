@@ -1,0 +1,429 @@
+// ============================================================
+//  Auto-Chemyth : データ定義（ユニット / シナジー / 器具 / 研究テーマ）
+// ============================================================
+
+export const STAR_HP = [1, 1.8, 3.24];
+export const STAR_AD = [1, 1.5, 2.25];
+export const NEUTRAL = { flat: 120, pct: 8 }; // 中和熱ダメージ
+
+// ---------- シナジー ----------
+// bp: 発動に必要な数 / v[i][tier]: 説明文 {i} に入る値
+export const TRAITS = {
+  alkali: { n: 'アルカリ金属', k: '族', ic: '炎', col: '#ff8a5c', bp: [2, 3, 4], v: [[25, 45, 75], [0, 25, 60]],
+    d: 'アルカリ金属の攻撃速度+{0}%。通常攻撃に炎色反応の追加魔法ダメージ{1}。',
+    why: '価電子1個。イオン化エネルギーが小さく1価の陽イオンになりやすい。原子番号が大きいほど反応性大。' },
+  halogen: { n: 'ハロゲン', k: '族', ic: 'ハ', col: '#b6e34a', bp: [2, 3, 4], v: [[20, 35, 55]],
+    d: 'ハロゲンがダメージを与えた敵のアーマー・魔法耐性を4秒間{0}%低下させる。',
+    why: '価電子7個。電子を1個奪い1価の陰イオンになりやすい。酸化力 F₂>Cl₂>Br₂>I₂。' },
+  noble: { n: '貴ガス', k: '族', ic: '貴', col: '#7fd8ff', bp: [2, 3], v: [[25, 50]],
+    d: '貴ガスは戦闘開始時に最大HPの{0}%のシールドを得る。(3)でスタン・挑発が無効になる。',
+    why: '閉殻構造で極めて安定。単原子分子。価電子は0として扱う。' },
+  trans: { n: '遷移金属', k: '族', ic: '遷', col: '#e6b657', bp: [2, 4], v: [[15, 40]],
+    d: '【触媒】味方全員のスキル威力+{0}。遷移金属自身は2倍。',
+    why: '3〜12族。有色のイオン・錯イオンをつくり、複数の酸化数をとる。触媒になるものが多い。' },
+  amph: { n: '両性金属', k: '族', ic: '両', col: '#c9a7ff', bp: [2, 3], v: [[25, 50]],
+    d: '両性金属のアーマー・魔法耐性+{0}。',
+    why: 'Al, Zn, Sn, Pb。酸とも強塩基とも反応して水素を発生する。' },
+  metal: { n: '金属結合', k: '性質', ic: '金', col: '#c8d0d8', bp: [3, 5, 7], v: [[15, 30, 55], [8, 16, 28]],
+    d: '金属のアーマー+{0}、攻撃力+{1}%。',
+    why: '自由電子による結合。電気・熱をよく伝え、展性・延性・金属光沢をもつ。' },
+  acid: { n: '酸', k: '性質', ic: '酸', col: '#ff5d73', bp: [2, 3, 4], v: [[2, 3.5, 5]],
+    d: '酸がダメージを与えた敵にH⁺を付与(4秒)。毎秒、最大HPの{0}%の魔法ダメージ。OH⁻と出会うと【中和】が起こる。',
+    why: 'H⁺を与える物質(ブレンステッド)。H⁺ + OH⁻ → H₂O の中和エンタルピーは −56.5 kJ/mol。' },
+  base: { n: '塩基', k: '性質', ic: '塩', col: '#5b8cff', bp: [2, 3], v: [[25, 40]],
+    d: '塩基がダメージを与えた敵にOH⁻を付与(4秒)。攻撃速度−{0}%。H⁺と出会うと【中和】が起こる。',
+    why: 'H⁺を受け取る物質。強塩基はアルカリ金属・Ca, Sr, Ba の水酸化物。' },
+  organic: { n: '有機化合物', k: '性質', ic: '有', col: '#59d98c', bp: [2, 4, 6], v: [[200, 450, 800], [0, 1.5, 3]],
+    d: '有機化合物の最大HP+{0}。毎秒、最大HPの{1}%を回復。',
+    why: '炭素骨格をもつ化合物。共有結合で構成され、官能基が性質を決める。' },
+  oxid: { n: '酸化剤', k: '性質', ic: '奪', col: '#ff9f1c', bp: [2, 4, 6], v: [[12, 25, 45]],
+    d: '酸化剤は与えたダメージの{0}%を追加の確定ダメージとして与える。',
+    why: '相手から電子を奪い、自身は還元される(酸化数が減少)。' },
+  reduc: { n: '還元剤', k: '性質', ic: '与', col: '#2ec4b6', bp: [2, 4], v: [[5, 10]],
+    d: '【電子供与】還元剤が通常攻撃するたび、マナ割合が最も低い味方にマナ{0}を与える。',
+    why: '相手に電子を与え、自身は酸化される(酸化数が増加)。' },
+  precip: { n: '沈殿', k: '性質', ic: '沈', col: '#e8e8f0', bp: [2, 3], v: [[20, 40]],
+    d: '【難溶性】沈殿は受けるダメージを毎回{0}軽減する(継続ダメージを除く)。',
+    why: '溶解度積 Ksp が小さい塩。イオン濃度の積が Ksp を超えると沈殿する。' },
+  gas: { n: '気体', k: '性質', ic: '気', col: '#a8f0e0', bp: [2, 4, 6], v: [[15, 25, 40]],
+    d: '【拡散】気体は通常攻撃を{0}%の確率で回避する。',
+    why: '分子が熱運動で飛び回る。理想気体の状態方程式 PV = nRT。' },
+  coval: { n: '共有結合の結晶', k: '性質', ic: '晶', col: '#f2f7ff', bp: [2], v: [[25]],
+    d: '共有結合の結晶は受けるダメージを{0}%軽減する。',
+    why: '全原子が共有結合で結びついた巨大分子。極めて硬く融点が高い(C, Si, SiO₂, SiC)。' },
+};
+for (const k in TRAITS) TRAITS[k].id = k;
+
+export function traitTier(id, count) {
+  const bp = TRAITS[id].bp; let t = 0;
+  for (let i = 0; i < bp.length; i++) if (count >= bp[i]) t = i + 1;
+  return t;
+}
+export function countTraits(units) {
+  const seen = new Set(), cnt = {};
+  for (const u of units) {
+    if (seen.has(u.id)) continue; seen.add(u.id);
+    const d = UNITS[u.id]; if (!d) continue;
+    for (const t of d.traits) cnt[t] = (cnt[t] || 0) + 1;
+  }
+  return cnt;
+}
+export function fmt(tpl, v, tier) {
+  return tpl.replace(/\{(\d)\}/g, (_, i) => {
+    const a = v[+i];
+    return a.map((x, j) => (tier && j === tier - 1 ? `<b class="on">${x}</b>` : x)).join('/');
+  });
+}
+
+// ---------- ユニット ----------
+const lowestAlly = (B, u, self = true) => {
+  let best = null, br = 2;
+  for (const a of B.allies(u, self)) { const r = a.hp / a.maxHp; if (r < br) { br = r; best = a; } }
+  return best;
+};
+const byDist = (B, u, list) => list.slice().sort((a, b) => B.d(u, a) - B.d(u, b) || a.uid - b.uid);
+const isOrg = (t) => t.def.traits.includes('organic');
+const foes = (B, u, r) => B.around(u.pos, r, 1 - u.team);
+const splash = (B, t, r = 1) => B.around(t.pos, r, t.team);
+
+export const UNITS = {};
+// U(id, 名前, 表示式, コスト, traits, [hp,ad,as,armor,mr,range], [mana0,manaMax], skill, 受験メモ, flags)
+function U(id, n, f, cost, traits, s, mana, skill, note, fl = {}) {
+  UNITS[id] = { id, n, f, cost, traits, hp: s[0], ad: s[1], as: s[2], armor: s[3], mr: s[4], range: s[5], mana, skill, note, fl };
+}
+
+// ===== コスト1 =====
+U('H2', '水素', 'H₂', 1, ['gas', 'reduc'], [480, 42, 0.75, 15, 15, 3], [0, 50], {
+  n: '爆鳴気', eq: '2H₂ + O₂ → 2H₂O', v: [[220, 330, 520]],
+  d: '対象に{0}の魔法ダメージ。味方にO₂がいると威力1.5倍。',
+  cast(u, B, V) { const t = u.tgt; B.fx('beam', { a: u, b: t, col: '#bfe6ff' }); B.hit(u, t, V(0) * (B.hasAlly(u, 'O2') ? 1.5 : 1)); },
+}, '最も軽い気体。水上置換で捕集。加熱した酸化銅(II)を還元する：CuO + H₂ → Cu + H₂O。');
+
+U('O2', '酸素', 'O₂', 1, ['gas', 'oxid'], [500, 45, 0.7, 15, 15, 3], [0, 60], {
+  n: '燃焼', eq: 'C + O₂ → CO₂', v: [[130, 200, 320], [20, 30, 50]],
+  d: '対象と隣接する敵に{0}の魔法ダメージを与え、3秒間 毎秒{1}の燃焼を付与。',
+  cast(u, B, V) { const t = u.tgt; B.fx('aoe', { pos: t.pos, r: 1, col: '#ff9f1c' }); for (const e of splash(B, t)) { B.hit(u, e, V(0)); B.burn(u, e, V(1), 3); } },
+}, '工業的には液体空気の分留。実験室ではH₂O₂をMnO₂触媒で分解して得る。同素体にオゾンO₃(淡青色・特異臭)。');
+
+U('CH4', 'メタン', 'CH₄', 1, ['gas', 'organic'], [520, 40, 0.7, 15, 15, 3], [0, 60], {
+  n: '正四面体', eq: 'CH₄ + 2O₂ → CO₂ + 2H₂O', v: [[110, 165, 270]],
+  d: '近い順に最大4体の敵へ{0}の魔法ダメージ(4つの頂点)。',
+  cast(u, B, V) { for (const e of byDist(B, u, B.enemies(u)).slice(0, 4)) { B.fx('beam', { a: u, b: e, col: '#59d98c' }); B.hit(u, e, V(0)); } },
+}, '正四面体形・無極性分子。結合角109.5°。光を当てると塩素と置換反応(連鎖反応)。天然ガスの主成分。');
+
+U('Zn', '亜鉛', 'Zn', 1, ['amph', 'metal', 'reduc'], [620, 45, 0.65, 40, 30, 1], [30, 80], {
+  n: '犠牲防食', eq: 'Zn → Zn²⁺ + 2e⁻', noTgt: true, v: [[220, 330, 550]],
+  d: 'HP割合が最も低い味方に{0}のシールド(4秒)。自身にもその半分。',
+  cast(u, B, V) { const a = lowestAlly(B, u, false) || u; B.fx('beam', { a: u, b: a, col: '#c9a7ff' }); B.shield(a, V(0), 4); if (a !== u) B.shield(u, V(0) / 2, 4); },
+}, 'トタン＝鉄に亜鉛めっき。傷がついてもイオン化傾向の大きいZnが先に酸化され鉄を守る。ブリキはSnめっき。', { acidSol: true });
+
+U('Fe', '鉄', 'Fe', 1, ['trans', 'metal'], [680, 45, 0.6, 45, 30, 1], [40, 90], {
+  n: '不動態', eq: '濃硝酸中で緻密な酸化被膜を形成', noTgt: true, v: [[250, 375, 600], [40, 60, 100]],
+  d: '4秒間、{0}のシールドとアーマー+{1}を得る。',
+  cast(u, B, V, R) { B.shield(u, V(0), 4); B.buff(u, 'armor', R(1), 4); },
+}, 'Fe, Ni, Al は濃硝酸で不動態になり溶けない。Fe²⁺は淡緑色、Fe³⁺は黄褐色。Fe³⁺ + KSCN → 血赤色。', { acidSol: true, passiv: true });
+
+U('I2', 'ヨウ素', 'I₂', 1, ['halogen'], [560, 52, 0.75, 30, 30, 1], [0, 60], {
+  n: '昇華', eq: 'I₂(固) → I₂(気)', v: [[150, 225, 370]],
+  d: '紫色の蒸気となり隣接する敵全員に{0}の魔法ダメージ。2.5秒間 回避率+50%。',
+  cast(u, B, V) { B.fx('aoe', { pos: u.pos, r: 1, col: '#9b5de5' }); for (const e of foes(B, u, 1)) B.hit(u, e, V(0)); B.buff(u, 'dodge', 0.5, 2.5); },
+}, '黒紫色の固体で昇華性をもつ分子結晶。水に溶けにくいがKI水溶液には溶ける(I₃⁻)。ヨウ素デンプン反応は青紫色。');
+
+U('NH3', 'アンモニア', 'NH₃', 1, ['gas', 'base'], [500, 40, 0.7, 15, 15, 3], [20, 60], {
+  n: '噴水実験', eq: 'NH₃ + H₂O ⇌ NH₄⁺ + OH⁻', v: [[140, 210, 340], [1, 1.25, 1.75]],
+  d: '対象に{0}の魔法ダメージを与え、{1}秒スタンさせる。',
+  cast(u, B, V, R) { const t = u.tgt; B.fx('beam', { a: u, b: t, col: '#5b8cff' }); B.hit(u, t, V(0)); B.stun(u, t, R(1)); },
+}, '刺激臭・水に極めてよく溶ける弱塩基。上方置換。ハーバー・ボッシュ法(Fe₃O₄触媒)で合成。濃塩酸を近づけると白煙NH₄Cl。');
+
+U('AcOH', '酢酸', 'CH₃COOH', 1, ['acid', 'organic'], [520, 42, 0.7, 15, 15, 3], [0, 50], {
+  n: '電離平衡', eq: 'CH₃COOH ⇌ CH₃COO⁻ + H⁺', v: [[180, 270, 430]],
+  d: '対象に{0}の魔法ダメージを与え、4秒間アーマーを30%低下させる。',
+  cast(u, B, V) { const t = u.tgt; B.fx('beam', { a: u, b: t, col: '#ff5d73' }); B.hit(u, t, V(0)); B.shred(t, 0.3, 4, 'A'); },
+}, '弱酸。電離度αが小さく [H⁺]≒√(c·Ka)。酢酸＋酢酸ナトリウムの混合水溶液は緩衝液。純粋なものは氷酢酸。');
+
+U('CaCO3', '炭酸カルシウム', 'CaCO₃', 1, ['precip'], [700, 40, 0.6, 45, 40, 1], [40, 90], {
+  n: '鍾乳石', eq: 'CaCO₃ + CO₂ + H₂O ⇌ Ca(HCO₃)₂', v: [[280, 420, 700], [80, 120, 200]],
+  d: '{0}のシールド(4秒)を得て、隣接する敵に{1}の魔法ダメージ。',
+  cast(u, B, V) { B.shield(u, V(0), 4); B.fx('aoe', { pos: u.pos, r: 1, col: '#e8e8f0' }); for (const e of foes(B, u, 1)) B.hit(u, e, V(1)); },
+}, '石灰石・大理石・貝殻の主成分。強熱で CaO + CO₂。塩酸でCO₂発生。CO₂を含む水に溶け、鍾乳洞をつくる。');
+
+U('Ar', 'アルゴン', 'Ar', 1, ['noble', 'gas'], [650, 42, 0.65, 40, 40, 1], [30, 80], {
+  n: '不活性雰囲気', eq: '反応しない', noTgt: true, v: [[180, 270, 450]],
+  d: '自身と最も近い味方に{0}のシールド(4秒)。',
+  cast(u, B, V) { B.shield(u, V(0), 4); const a = byDist(B, u, B.allies(u, false))[0]; if (a) { B.fx('beam', { a: u, b: a, col: '#7fd8ff' }); B.shield(a, V(0), 4); } },
+}, '空気中に約0.93%含まれ、N₂, O₂に次いで3番目に多い。電球の封入ガスや溶接の保護ガス。');
+
+U('Li', 'リチウム', 'Li', 1, ['alkali', 'metal'], [480, 40, 0.75, 20, 20, 3], [0, 60], {
+  n: 'リチウムイオン電池', eq: 'Li → Li⁺ + e⁻', noTgt: true, v: [[20, 30, 50], [20, 30, 50]],
+  d: '近い味方2体にマナ{0}を与え、自身は4秒間 攻撃速度+{1}%。',
+  cast(u, B, V, R) { for (const a of byDist(B, u, B.allies(u, false)).slice(0, 2)) { B.fx('beam', { a: u, b: a, col: '#ff4d4d' }); B.mana(a, R(0)); } B.buff(u, 'as', R(1) / 100, 4); },
+}, '炎色反応は赤。イオン化傾向は金属中で最大。アルカリ金属の単体は石油(灯油)中に保存する。', { acidSol: true });
+
+// ===== コスト2 =====
+U('Na', 'ナトリウム', 'Na', 2, ['alkali', 'metal', 'reduc'], [650, 55, 0.75, 35, 30, 1], [0, 70], {
+  n: '水との反応', eq: '2Na + 2H₂O → 2NaOH + H₂↑', v: [[200, 300, 500]],
+  d: '激しく反応し、隣接する敵全員に{0}の魔法ダメージ(黄色の炎)。',
+  cast(u, B, V) { B.fx('aoe', { pos: u.pos, r: 1, col: '#ffd60a' }); for (const e of foes(B, u, 1)) B.hit(u, e, V(0)); },
+}, '炎色反応は黄色。単体はNaClの溶融塩電解で得る。NaOHは潮解性、Na₂CO₃·10H₂Oは風解性。', { acidSol: true });
+
+U('Br2', '臭素', 'Br₂', 2, ['halogen'], [550, 55, 0.75, 20, 20, 3], [0, 60], {
+  n: '付加反応', eq: 'CH₂=CH₂ + Br₂ → CH₂Br−CH₂Br', v: [[200, 300, 480]],
+  d: '対象に{0}の魔法ダメージ。有機化合物には1.5倍(臭素水の脱色)。',
+  cast(u, B, V) { const t = u.tgt; B.fx('beam', { a: u, b: t, col: '#a0522d' }); B.hit(u, t, V(0) * (isOrg(t) ? 1.5 : 1)); },
+}, '常温で液体の非金属単体は臭素だけ(赤褐色)。臭素水の脱色でC=C, C≡Cを検出する。');
+
+U('HCl', '塩酸', 'HCl', 2, ['acid', 'gas'], [560, 47, 0.7, 20, 20, 3], [0, 60], {
+  n: '強酸', eq: 'Zn + 2HCl → ZnCl₂ + H₂↑', v: [[240, 360, 580]],
+  d: '対象に{0}の魔法ダメージ。イオン化傾向がH₂より大きい金属(Li, Na, K, Cs, Zn, Al, Fe)には1.5倍。',
+  cast(u, B, V) { const t = u.tgt; B.fx('beam', { a: u, b: t, col: '#ff5d73' }); B.hit(u, t, V(0) * (t.def.fl.acidSol ? 1.5 : 1)); },
+}, '塩化水素の水溶液。Cu, Ag, Auは溶けない。PbはPbCl₂の被膜ができるため溶けにくい。HClは下方置換で捕集。');
+
+U('Cu', '銅', 'Cu', 2, ['trans', 'metal'], [700, 55, 0.7, 40, 35, 1], [0, 70], {
+  n: '電気伝導', eq: 'Cu + 2H₂SO₄(熱濃) → CuSO₄ + SO₂ + 2H₂O', v: [[130, 195, 320], [3, 4, 5]],
+  d: '対象から電流が連鎖し、最大{1}体に{0}の魔法ダメージ。',
+  cast(u, B, V, R) {
+    let cur = u.tgt, prev = u; const done = new Set();
+    for (let i = 0; i < R(1) && cur; i++) {
+      B.fx('beam', { a: prev, b: cur, col: '#e6b657' }); B.hit(u, cur, V(0)); done.add(cur); prev = cur;
+      cur = byDist(B, prev, B.enemies(u).filter(e => !done.has(e) && B.d(prev, e) <= 3))[0];
+    }
+  },
+}, '赤色の金属。電気伝導性はAgに次ぐ。塩酸には溶けず、硝酸・熱濃硫酸に溶ける。Cu²⁺は青色、炎色反応は青緑。');
+
+U('Al', 'アルミニウム', 'Al', 2, ['amph', 'metal', 'reduc'], [680, 58, 0.7, 40, 40, 1], [0, 80], {
+  n: 'テルミット反応', eq: '2Al + Fe₂O₃ → Al₂O₃ + 2Fe', v: [[260, 390, 640]],
+  d: '対象に{0}の魔法ダメージ、その隣接する敵に半分のダメージ。',
+  cast(u, B, V) { const t = u.tgt; B.fx('aoe', { pos: t.pos, r: 1, col: '#ffb703' }); for (const e of splash(B, t)) B.hit(u, e, e === t ? V(0) : V(0) / 2); },
+}, 'ボーキサイト→アルミナ→氷晶石を用いた溶融塩電解で製造。酸にも強塩基にも溶ける。濃硝酸には不動態。', { acidSol: true, passiv: true });
+
+U('AgCl', '塩化銀', 'AgCl', 2, ['precip'], [820, 47, 0.6, 45, 45, 1], [50, 100], {
+  n: '白色沈殿', eq: 'Ag⁺ + Cl⁻ → AgCl↓', v: [[1.5, 2, 3], [120, 180, 300]],
+  d: '対象を沈殿に閉じ込めて{0}秒スタンさせ、{1}の魔法ダメージ。',
+  cast(u, B, V, R) { const t = u.tgt; B.fx('aoe', { pos: t.pos, r: 0, col: '#ffffff' }); B.hit(u, t, V(1)); B.stun(u, t, R(0)); },
+}, '白色沈殿で感光性(光でAgが遊離し黒変)。アンモニア水に[Ag(NH₃)₂]⁺となって溶ける。AgBr淡黄色、AgI黄色。');
+
+U('H2O2', '過酸化水素', 'H₂O₂', 2, ['oxid', 'reduc'], [560, 45, 0.7, 20, 20, 3], [0, 70], {
+  n: '分解', eq: '2H₂O₂ → 2H₂O + O₂ (MnO₂触媒)', v: [[180, 270, 430], [150, 225, 380]],
+  d: '対象に{0}の魔法ダメージ。発生したO₂でHP割合が最も低い味方を{1}回復。',
+  cast(u, B, V) { const t = u.tgt; B.fx('beam', { a: u, b: t, col: '#ff9f1c' }); B.hit(u, t, V(0)); const a = lowestAlly(B, u); if (a) B.heal(u, a, V(1)); },
+}, '普通は酸化剤(H₂O₂+2H⁺+2e⁻→2H₂O)。KMnO₄など強い酸化剤には還元剤(H₂O₂→O₂+2H⁺+2e⁻)としてはたらく。');
+
+U('EtOH', 'エタノール', 'C₂H₅OH', 2, ['organic'], [560, 42, 0.7, 20, 20, 3], [20, 70], {
+  n: '消毒', eq: 'C₆H₁₂O₆ → 2C₂H₅OH + 2CO₂', noTgt: true, v: [[220, 330, 550]],
+  d: 'HP割合が最も低い味方を{0}回復し、H⁺・OH⁻・燃焼・耐性低下を取り除く。',
+  cast(u, B, V) { const a = lowestAlly(B, u); if (!a) return; B.fx('beam', { a: u, b: a, col: '#59d98c' }); B.heal(u, a, V(0)); B.cleanse(a); },
+}, '濃硫酸と130〜140℃でジエチルエーテル、160〜170℃でエチレン。ヨードホルム反応陽性。Naと反応しH₂発生。');
+
+U('Ne', 'ネオン', 'Ne', 2, ['noble', 'gas'], [720, 48, 0.65, 45, 45, 1], [40, 90], {
+  n: 'ネオンサイン', eq: '放電で赤橙色に発光', v: [[120, 180, 300]],
+  d: '2マス以内の敵に{0}の魔法ダメージを与え、3秒間 攻撃速度を30%低下させる。',
+  cast(u, B, V) { B.fx('aoe', { pos: u.pos, r: 2, col: '#ff6b35' }); for (const e of foes(B, u, 2)) { B.hit(u, e, V(0)); B.buff(e, 'as', -0.3, 3); } },
+}, '電子配置 K2 L8 の閉殻。第一イオン化エネルギーはHeに次いで大きい。放電管で赤橙色に光る。');
+
+U('CaOH2', '水酸化カルシウム', 'Ca(OH)₂', 2, ['base'], [580, 44, 0.7, 20, 20, 3], [0, 60], {
+  n: '石灰水', eq: 'Ca(OH)₂ + CO₂ → CaCO₃↓ + H₂O', v: [[150, 225, 370]],
+  d: '対象と隣接する敵に{0}の魔法ダメージ(白濁)。',
+  cast(u, B, V) { const t = u.tgt; B.fx('aoe', { pos: t.pos, r: 1, col: '#5b8cff' }); for (const e of splash(B, t)) B.hit(u, e, V(0)); },
+}, '消石灰。飽和水溶液が石灰水。CO₂で白濁し、過剰に通じるとCa(HCO₃)₂となり再び溶ける。Cl₂と反応させさらし粉。');
+
+// ===== コスト3 =====
+U('K', 'カリウム', 'K', 3, ['alkali', 'metal', 'reduc'], [720, 62, 0.8, 35, 35, 1], [0, 60], {
+  n: '赤紫の炎', eq: '2K + 2H₂O → 2KOH + H₂↑', v: [[60, 80, 120], [40, 60, 100]],
+  d: '4秒間 攻撃速度+{0}%、通常攻撃に{1}の追加魔法ダメージ。',
+  cast(u, B, V, R) { B.fx('aoe', { pos: u.pos, r: 0, col: '#c77dff' }); B.buff(u, 'as', R(0) / 100, 4); B.buff(u, 'onhit', V(1), 4); },
+}, '炎色反応は赤紫。Naよりイオン化エネルギーが小さく反応が激しい。語呂「リアカー無きK村…」。', { acidSol: true });
+
+U('Cl2', '塩素', 'Cl₂', 3, ['halogen', 'oxid', 'gas'], [620, 58, 0.75, 20, 20, 3], [0, 80], {
+  n: '塩素ガス', eq: 'MnO₂ + 4HCl → MnCl₂ + Cl₂↑ + 2H₂O', v: [[70, 105, 180]],
+  d: '対象と隣接する敵を黄緑色の毒ガスで包み、4秒間 毎秒{0}の魔法ダメージ。',
+  cast(u, B, V) { const t = u.tgt; B.fx('aoe', { pos: t.pos, r: 1, col: '#b6e34a' }); for (const e of splash(B, t)) { B.hit(u, e, V(0)); B.burn(u, e, V(0), 4); } },
+}, '黄緑色・刺激臭の有毒な気体。下方置換。水に溶けてHClOを生じ、漂白・殺菌作用を示す。KI水溶液からI₂を遊離。');
+
+U('HNO3', '硝酸', 'HNO₃', 3, ['acid', 'oxid'], [650, 57, 0.75, 20, 20, 3], [0, 70], {
+  n: '酸化力のある酸', eq: '3Cu + 8HNO₃(希) → 3Cu(NO₃)₂ + 2NO + 4H₂O', v: [[300, 450, 750]],
+  d: '対象に魔法耐性を50%無視する{0}の魔法ダメージ。不動態をつくるFe・Alにはダメージ半減。',
+  cast(u, B, V) { const t = u.tgt; B.fx('beam', { a: u, b: t, col: '#ffd166' }); B.hit(u, t, V(0) * (t.def.fl.passiv ? 0.5 : 1), 'magic', { pen: 0.5 }); },
+}, 'オストワルト法(Pt触媒)で製造。Cu, Agも溶かし、希硝酸はNO、濃硝酸はNO₂を発生。光で分解するので褐色びんに保存。');
+
+U('NaOH', '水酸化ナトリウム', 'NaOH', 3, ['base'], [650, 52, 0.7, 20, 20, 3], [0, 75], {
+  n: 'けん化', eq: '油脂 + 3NaOH → グリセリン + 3RCOONa', v: [[190, 285, 480]],
+  d: '対象と隣接する敵に{0}の魔法ダメージ＋1秒スタン。有機化合物には1.5倍。',
+  cast(u, B, V) { const t = u.tgt; B.fx('aoe', { pos: t.pos, r: 1, col: '#5b8cff' }); for (const e of splash(B, t)) { B.hit(u, e, V(0) * (isOrg(e) ? 1.5 : 1)); B.stun(u, e, 1); } },
+}, '強塩基で潮解性。空気中のCO₂を吸収する。工業的にはNaCl水溶液のイオン交換膜法。油脂をけん化するとセッケン。');
+
+U('Ag', '銀', 'Ag', 3, ['trans', 'metal'], [750, 68, 0.8, 40, 40, 1], [0, 70], {
+  n: '最高の伝導性', eq: 'Ag + 2HNO₃(濃) → AgNO₃ + NO₂ + H₂O', v: [[50, 75, 120], [15, 20, 30]],
+  d: '5秒間 攻撃速度+{0}%、通常攻撃で与えたダメージの{1}%を回復。',
+  cast(u, B, V, R) { B.fx('aoe', { pos: u.pos, r: 0, col: '#e0e6ee' }); B.buff(u, 'as', R(0) / 100, 5); B.buff(u, 'vamp', R(1) / 100, 5); },
+}, '電気・熱の伝導性は金属中で最大。Ag₂O褐色、Ag₂S黒色、Ag₂CrO₄赤褐色。銀鏡反応はアルデヒドの検出。');
+
+U('BaSO4', '硫酸バリウム', 'BaSO₄', 3, ['precip'], [1000, 52, 0.6, 55, 55, 1], [60, 120], {
+  n: 'X線造影剤', eq: 'Ba²⁺ + SO₄²⁻ → BaSO₄↓', v: [[400, 600, 1000]],
+  d: '{0}のシールド(5秒)を得て、隣接する敵を2秒間 挑発する。',
+  cast(u, B, V) { B.shield(u, V(0), 5); B.fx('aoe', { pos: u.pos, r: 1, col: '#ffffff' }); for (const e of foes(B, u, 1)) B.taunt(u, e, 2); },
+}, '白色沈殿で酸にも溶けない。X線をよく吸収するため造影剤に使う。Ba²⁺の炎色反応は黄緑。');
+
+U('C6H6', 'ベンゼン', 'C₆H₆', 3, ['organic'], [820, 60, 0.7, 45, 45, 1], [30, 90], {
+  n: '共鳴', eq: 'C₆H₆ + HNO₃ → C₆H₅NO₂ + H₂O', v: [[200, 300, 500], [200, 300, 500]],
+  d: '正六角形の6方向に隣接する敵へ{0}の魔法ダメージ。自身は{1}のシールド(4秒)。',
+  cast(u, B, V) { B.fx('aoe', { pos: u.pos, r: 1, col: '#59d98c' }); for (const e of foes(B, u, 1)) B.hit(u, e, V(0)); B.shield(u, V(1), 4); },
+}, '正六角形の平面分子でC−C結合の長さはすべて等しい。付加より置換(ニトロ化・スルホン化・ハロゲン化)が起こりやすい。');
+
+U('He', 'ヘリウム', 'He', 3, ['noble', 'gas'], [600, 50, 0.7, 20, 20, 3], [30, 100], {
+  n: '極低温', eq: '沸点 −269℃', v: [[1.5, 2, 3], [150, 225, 380]],
+  d: '対象と隣接する敵を{0}秒凍結(スタン)させ、{1}の魔法ダメージ。',
+  cast(u, B, V, R) { const t = u.tgt; B.fx('aoe', { pos: t.pos, r: 1, col: '#bde0fe' }); for (const e of splash(B, t)) { B.hit(u, e, V(1)); B.stun(u, e, R(0)); } },
+}, '沸点は全物質中で最低。K殻に電子2個で閉殻。第一イオン化エネルギーは全元素中最大。H₂に次いで軽く不燃性。');
+
+U('Pb', '鉛', 'Pb', 3, ['amph', 'metal'], [850, 55, 0.6, 55, 50, 1], [40, 100], {
+  n: '鉛蓄電池', eq: 'Pb + PbO₂ + 2H₂SO₄ ⇄ 2PbSO₄ + 2H₂O', v: [[300, 450, 750], [130, 195, 320]],
+  d: '自身を{0}回復し、隣接する敵に{1}の魔法ダメージ(放電)。',
+  cast(u, B, V) { B.heal(u, u, V(0)); B.fx('aoe', { pos: u.pos, r: 1, col: '#8d99ae' }); for (const e of foes(B, u, 1)) B.hit(u, e, V(1)); },
+}, '放電すると両極にPbSO₄が付着して質量が増え、希硫酸の濃度は下がる。PbCl₂白、PbSO₄白、PbCrO₄黄、PbS黒。');
+
+// ===== コスト4 =====
+U('F2', 'フッ素', 'F₂', 4, ['halogen', 'oxid', 'gas'], [700, 70, 0.8, 25, 25, 4], [0, 80], {
+  n: '最強の酸化力', eq: '2F₂ + 2H₂O → 4HF + O₂', global: true, v: [[450, 675, 1400]],
+  d: '最大HPが最も高い敵に{0}の魔法ダメージを与え、5秒間アーマー・魔法耐性を50%低下させる。',
+  cast(u, B, V) { const t = B.enemies(u).sort((a, b) => b.maxHp - a.maxHp)[0]; if (!t) return; B.fx('beam', { a: u, b: t, col: '#f6f7a6' }); B.shred(t, 0.5, 5); B.hit(u, t, V(0)); },
+}, '淡黄色の気体。電気陰性度は全元素中最大(4.0)。HFは水素結合のため沸点が高く弱酸で、ガラス(SiO₂)を溶かす。');
+
+U('H2SO4', '硫酸', 'H₂SO₄', 4, ['acid'], [800, 62, 0.75, 25, 25, 3], [0, 75], {
+  n: '脱水作用', eq: 'C₁₂H₂₂O₁₁ → 12C + 11H₂O', v: [[320, 480, 1000]],
+  d: '対象と隣接する敵に{0}の魔法ダメージ。有機化合物には1.5倍(炭化)。',
+  cast(u, B, V) { const t = u.tgt; B.fx('aoe', { pos: t.pos, r: 1, col: '#ff5d73' }); for (const e of splash(B, t)) B.hit(u, e, V(0) * (isOrg(e) ? 1.5 : 1)); },
+}, '接触法(V₂O₅触媒)で製造。濃硫酸は不揮発性・吸湿性・脱水作用、熱濃硫酸は酸化作用。希釈は「水に濃硫酸を少しずつ」。');
+
+U('KMnO4', '過マンガン酸カリウム', 'KMnO₄', 4, ['oxid'], [700, 55, 0.75, 25, 25, 4], [0, 75], {
+  n: '5電子酸化', eq: 'MnO₄⁻ + 8H⁺ + 5e⁻ → Mn²⁺ + 4H₂O', global: true, v: [[130, 195, 420]],
+  d: 'ランダムな敵に5発、各{0}の魔法ダメージ。H⁺状態の敵には1.4倍(酸性条件)。',
+  cast(u, B, V) { for (let i = 0; i < 5; i++) { const es = B.enemies(u); if (!es.length) return; const e = es[Math.floor(B.rng() * es.length)]; B.fx('beam', { a: u, b: e, col: '#c1125b' }); B.hit(u, e, V(0) * (e.st.hplus ? 1.4 : 1)); } },
+}, 'MnO₄⁻(赤紫)は酸性でMn²⁺(ほぼ無色)、中性・塩基性ではMnO₂(黒褐色)。滴定は硫酸酸性で行い指示薬は不要。');
+
+U('NG', 'ニトログリセリン', 'C₃H₅(ONO₂)₃', 4, ['organic'], [720, 60, 0.7, 25, 25, 3], [0, 100], {
+  n: '爆発', eq: '4C₃H₅(ONO₂)₃ → 12CO₂ + 10H₂O + 6N₂ + O₂', global: true, v: [[380, 570, 1300]],
+  d: '敵が最も密集した地点の2マス以内に{0}の魔法ダメージ。',
+  cast(u, B, V) {
+    let best = null, bn = 0;
+    for (const e of B.enemies(u)) { const n = B.around(e.pos, 2, e.team).length; if (n > bn) { bn = n; best = e; } }
+    if (!best) return; B.fx('aoe', { pos: best.pos, r: 2, col: '#ff3d00' });
+    for (const e of B.around(best.pos, 2, best.team)) B.hit(u, e, V(0));
+  },
+}, 'グリセリンと硝酸のエステル(硝酸エステル)。名前に反して「ニトロ化合物」ではない。ダイナマイトの原料、狭心症の薬。');
+
+U('Pt', '白金', 'Pt', 4, ['trans', 'metal'], [950, 60, 0.65, 60, 60, 1], [50, 120], {
+  n: '触媒作用', eq: '4NH₃ + 5O₂ → 4NO + 6H₂O (Pt触媒)', noTgt: true, v: [[25, 40, 80], [15, 20, 40]],
+  d: '5秒間 味方全員の攻撃速度+{0}%。自身以外の味方にマナ{1}。',
+  cast(u, B, V, R) { B.fx('aoe', { pos: u.pos, r: 2, col: '#e6b657' }); for (const a of B.allies(u)) { B.buff(a, 'as', R(0) / 100, 5); if (a !== u) B.mana(a, R(1)); } },
+}, '触媒は活性化エネルギーを下げて反応速度を上げるが、反応エンタルピーと平衡の位置は変えない。Ptは王水にのみ溶ける。');
+
+U('SiO2', '二酸化ケイ素', 'SiO₂', 4, ['coval'], [1050, 55, 0.6, 70, 60, 1], [60, 130], {
+  n: '石英ガラス', eq: 'SiO₂ + 2NaOH → Na₂SiO₃ + H₂O', noTgt: true, v: [[40, 50, 70], [40, 60, 120]],
+  d: '4秒間 受けるダメージを{0}%軽減し、通常攻撃してきた敵に{1}の魔法ダメージを反射。',
+  cast(u, B, V, R) { B.fx('aoe', { pos: u.pos, r: 0, col: '#f2f7ff' }); B.buff(u, 'dr', R(0) / 100, 4); B.buff(u, 'thorns', V(1), 4); },
+}, '石英・水晶・ケイ砂。酸性酸化物でNaOHと反応しNa₂SiO₃→水ガラス→シリカゲル。フッ化水素酸にのみ溶ける。');
+
+// ===== コスト5 =====
+U('Au', '金', 'Au', 5, ['trans', 'metal'], [1100, 85, 0.85, 60, 60, 1], [0, 80], {
+  n: '展性・延性', eq: 'Au は王水にのみ溶ける', v: [[300, 450, 2000], [200, 300, 1500]],
+  d: '金箔を広げ、2マス以内の敵に{0}の魔法ダメージ。味方全員に{1}のシールド(4秒)。【常時】酸に侵されずH⁺を受けない。',
+  cast(u, B, V) { B.fx('aoe', { pos: u.pos, r: 2, col: '#ffd700' }); for (const e of foes(B, u, 2)) B.hit(u, e, V(0)); for (const a of B.allies(u)) B.shield(a, V(1), 4); },
+}, 'イオン化傾向は最小で、王水(濃硝酸:濃塩酸=1:3)にのみ溶ける。展性・延性は金属中で最大。', { noAcid: true });
+
+U('Dia', 'ダイヤモンド', 'C', 5, ['coval'], [1200, 80, 0.7, 80, 80, 1], [50, 120], {
+  n: '最高硬度', eq: 'C(黒鉛) → C(ダイヤモンド)', v: [[350, 525, 2500]],
+  d: '対象に{0}の物理ダメージ＋2秒スタン。戦闘中ずっと自身のアーマー・魔法耐性+40(累積)。',
+  cast(u, B, V) { const t = u.tgt; B.fx('aoe', { pos: t.pos, r: 0, col: '#e0fbff' }); B.hit(u, t, V(0), 'phys'); B.stun(u, t, 2); u.armor += 40; u.mr += 40; },
+}, '炭素の同素体(黒鉛・フラーレン・カーボンナノチューブ)。正四面体構造で電気を通さない。黒鉛は層状で電気を通す。');
+
+U('Aqua', '王水', '王水', 5, ['acid', 'oxid'], [850, 70, 0.8, 30, 30, 4], [0, 90], {
+  n: '金をも溶かす', eq: '濃HNO₃ : 濃HCl = 1 : 3 (体積比)', global: true, v: [[400, 600, 2500]],
+  d: '現在HPが最も高い敵とその隣接する敵に{0}の確定ダメージ。',
+  cast(u, B, V) { const t = B.enemies(u).sort((a, b) => b.hp - a.hp)[0]; if (!t) return; B.fx('beam', { a: u, b: t, col: '#ffb000' }); B.fx('aoe', { pos: t.pos, r: 1, col: '#ffb000' }); for (const e of splash(B, t)) B.hit(u, e, V(0), 'true'); },
+}, '濃硝酸と濃塩酸を体積比1:3で混合。AuやPtも溶かす。「1升(硝)3円(塩)」で覚える。');
+
+U('Nylon', 'ナイロン66', 'ﾅｲﾛﾝ66', 5, ['organic'], [950, 68, 0.75, 30, 30, 3], [0, 80], {
+  n: '界面重合', eq: 'n HOOC(CH₂)₄COOH + n H₂N(CH₂)₆NH₂ → ナイロン66 + 2n H₂O', global: true, v: [[3, 4, 8], [1.5, 2, 4], [200, 300, 1500]],
+  d: '近い順に最大{0}体の敵を糸で縛り{1}秒スタン、{2}の魔法ダメージ。【常時・縮合重合】2秒ごとに最大HP+3%、攻撃力+2%。',
+  cast(u, B, V, R) { for (const e of byDist(B, u, B.enemies(u)).slice(0, R(0))) { B.fx('beam', { a: u, b: e, col: '#ffffff' }); B.hit(u, e, V(2)); B.stun(u, e, R(1)); } },
+}, 'アジピン酸とヘキサメチレンジアミンの縮合重合(アミド結合)。ナイロン6はε-カプロラクタムの開環重合。', { polymer: true });
+
+U('Cs', 'セシウム', 'Cs', 5, ['alkali', 'metal'], [950, 80, 0.9, 45, 45, 1], [0, 60], {
+  n: '爆発的反応', eq: '2Cs + 2H₂O → 2CsOH + H₂↑', v: [[350, 525, 2500], [30, 45, 100]],
+  d: '2マス以内の敵に{0}の魔法ダメージ。以後、戦闘中ずっと攻撃速度+{1}%(累積)。',
+  cast(u, B, V, R) { B.fx('aoe', { pos: u.pos, r: 2, col: '#6a5cff' }); for (const e of foes(B, u, 2)) B.hit(u, e, V(0)); B.buff(u, 'as', R(1) / 100, 999); },
+}, '安定な元素の中でイオン化エネルギー・電気陰性度が最小。炎色反応は青紫。水と爆発的に反応する。', { acidSol: true });
+
+// ---------- 実験ラウンド(PvE)の敵 ----------
+function M(id, n, f, s) { UNITS[id] = { id, n, f, cost: 0, traits: [], hp: s[0], ad: s[1], as: s[2], armor: s[3], mr: s[4], range: s[5], mana: [0, 0], skill: null, note: '', fl: {}, mob: true }; }
+M('m_dust', '不純物', '不純', [300, 28, 0.6, 10, 10, 1]);
+M('m_rust', '赤さび', 'Fe₂O₃', [550, 42, 0.6, 30, 20, 1]);
+M('m_rain', '酸性雨', 'SOₓ', [420, 55, 0.7, 10, 20, 3]);
+M('m_smog', '光化学スモッグ', 'NOₓ', [1500, 85, 0.7, 40, 40, 1]);
+
+export const UNIT_IDS = Object.keys(UNITS).filter(k => !UNITS[k].mob);
+export const BY_COST = [1, 2, 3, 4, 5].map(c => UNIT_IDS.filter(id => UNITS[id].cost === c));
+
+// ---------- 実験器具(アイテム) ----------
+export const COMPS = ['heat', 'press', 'elec', 'light', 'water'];
+export const ITEMS = {
+  heat: { n: 'ガスバーナー', ic: '🔥', comp: 1, s: { ad: 10 }, d: '攻撃力+10' },
+  press: { n: '耐圧容器', ic: '🗜️', comp: 1, s: { hp: 150 }, d: 'HP+150' },
+  elec: { n: '電極', ic: '⚡', comp: 1, s: { as: 0.1 }, d: '攻撃速度+10%' },
+  light: { n: '紫外線ランプ', ic: '💡', comp: 1, s: { ap: 10 }, d: 'スキル威力+10' },
+  water: { n: '溶媒(水)', ic: '💧', comp: 1, s: { mana: 15 }, d: '開始マナ+15' },
+
+  thermite: { n: 'テルミット反応', ic: '🌋', r: ['heat', 'heat'], s: { ad: 28 }, fx: { splash: 0.3 },
+    d: '攻撃力+28。通常攻撃が対象に隣接する敵にも30%のダメージ(飛び散る溶融鉄)。' },
+  haber: { n: 'ハーバー・ボッシュ法', ic: '🏭', r: ['heat', 'press'], s: { ad: 10, hp: 150 }, fx: { haber: 0.03 },
+    d: '攻撃力+10、HP+150。毎秒 攻撃力+3%(最大15回)。高温・高圧で生成物が増え続ける。' },
+  molten: { n: '溶融塩電解', ic: '⚒️', r: ['heat', 'elec'], s: { ad: 10, as: 0.1 }, fx: { sunder: 0.4 },
+    d: '攻撃力+10、攻撃速度+10%。通常攻撃が3秒間 対象のアーマーを40%低下させる。' },
+  flame: { n: '炎色反応', ic: '🎆', r: ['heat', 'light'], s: { ad: 10, ap: 10 }, fx: { burn: 2 },
+    d: '攻撃力+10、スキル威力+10。スキルが命中した敵を4秒間燃焼させる(毎秒 最大HPの2%)。' },
+  distill: { n: '蒸留', ic: '⚗️', r: ['heat', 'water'], s: { ad: 10, mana: 15, crit: 0.35, critD: 0.2 },
+    d: '攻撃力+10、開始マナ+15。クリティカル率+35%、クリティカルダメージ+20%(純度が上がる)。' },
+  lechat: { n: 'ルシャトリエの原理', ic: '⚖️', r: ['press', 'press'], s: { hp: 400 }, fx: { regenMiss: 0.05 },
+    d: 'HP+400。毎秒、失ったHPの5%を回復(変化を打ち消す方向へ平衡が移動する)。' },
+  plating: { n: '電気めっき', ic: '🛡️', r: ['press', 'elec'], s: { hp: 150, as: 0.1, armor: 45 }, fx: { thorns: 30 },
+    d: 'HP+150、攻撃速度+10%、アーマー+45。通常攻撃してきた敵に30の魔法ダメージ。' },
+  colloid: { n: '保護コロイド', ic: '🫧', r: ['press', 'light'], s: { hp: 150, ap: 10 }, fx: { colloid: 240 },
+    d: 'HP+150、スキル威力+10。戦闘開始時、自身と隣接する味方に240のシールド(8秒)。' },
+  osmosis: { n: '浸透圧', ic: '🧫', r: ['press', 'water'], s: { hp: 150, mana: 15, mr: 50 }, fx: { dotRes: 0.5 },
+    d: 'HP+150、開始マナ+15、魔法耐性+50。継続ダメージ(H⁺・燃焼)を50%軽減する半透膜。' },
+  faraday: { n: 'ファラデーの法則', ic: '🔋', r: ['elec', 'elec'], s: { as: 0.3 }, fx: { ramp: 0.04 },
+    d: '攻撃速度+30%。通常攻撃のたびに攻撃速度+4%(最大15回)。流した電気量に比例して増える。' },
+  daniell: { n: 'ダニエル電池', ic: '🔌', r: ['elec', 'light'], s: { as: 0.1, ap: 10 }, fx: { chain: 70 },
+    d: '攻撃速度+10%、スキル威力+10。通常攻撃3回ごとに電流が3体に連鎖し70の魔法ダメージ。' },
+  electro: { n: '水の電気分解', ic: '🧪', r: ['elec', 'water'], s: { as: 0.1, mana: 15, manaAtk: 5 },
+    d: '攻撃速度+10%、開始マナ+15。通常攻撃で得るマナ+5。' },
+  chain: { n: '連鎖反応', ic: '✨', r: ['light', 'light'], s: { ap: 35 }, fx: { apCast: 12 },
+    d: 'スキル威力+35。スキルを使うたびにスキル威力+12(ラジカルが次のラジカルを生む)。' },
+  photo: { n: '光合成', ic: '🌿', r: ['light', 'water'], s: { ap: 10, mana: 15 }, fx: { svamp: 0.25 },
+    d: 'スキル威力+10、開始マナ+15。スキルで与えたダメージの25%を回復。' },
+  buffer: { n: '緩衝液', ic: '🧴', r: ['water', 'water'], s: { mana: 30 }, fx: { buffer: 0.25 },
+    d: '開始マナ+30。HPが40%を下回ると一度だけ、最大HPの25%のシールド(5秒)を得て弱体を解除する。' },
+};
+for (const k in ITEMS) ITEMS[k].id = k;
+export const FULL_ITEMS = Object.keys(ITEMS).filter(k => !ITEMS[k].comp);
+export const RECIPE = {};
+for (const k of FULL_ITEMS) RECIPE[ITEMS[k].r.slice().sort().join('+')] = k;
+export const combine = (a, b) => RECIPE[[a, b].sort().join('+')];
+
+// ---------- 研究テーマ(強化選択) ----------
+export const AUGS = [
+  { id: 'grant', n: '研究費獲得', ic: '💰', d: 'すぐに15ゴールドを得る。', now: p => { p.gold += 15; } },
+  { id: 'interest', n: '複利計算', ic: '📈', d: '利息の上限が5→8ゴールドになる。', now: p => { p.intCap = 8; } },
+  { id: 'reroll', n: '試薬問屋', ic: '🔁', d: 'ショップのリロード費用が1ゴールドになる。', now: p => { p.rerollCost = 1; } },
+  { id: 'xp', n: '飛び級', ic: '🎓', d: 'すぐに経験値12を得る。', now: (p, g) => g.addXP(p, 12) },
+  { id: 'kit', n: '実験器具一式', ic: '🧰', d: 'ランダムな器具素材を3個得る。', now: (p, g) => { for (let i = 0; i < 3; i++) p.items.push(g.randComp()); } },
+  { id: 'slot', n: '大型フラスコ', ic: '⚗️', d: '盤面に配置できる数+1。', now: p => { p.extraSlot += 1; } },
+  { id: 'as', n: '触媒添加', ic: '⏩', d: '味方全員の攻撃速度+15%。', mods: { as: 0.15 } },
+  { id: 'hp', n: '耐圧設計', ic: '❤️', d: '味方全員の最大HP+220。', mods: { hp: 220 } },
+  { id: 'mana', n: '予熱', ic: '♨️', d: '味方全員の開始マナ+25。', mods: { mana: 25 } },
+  { id: 'exo', n: '発熱反応', ic: '🔥', d: '味方全員の攻撃力+15%、スキル威力+15。', mods: { adPct: 0.15, ap: 15 } },
+  { id: 'inert', n: '不活性雰囲気', ic: '🌫️', d: '戦闘開始から8秒間、味方全員の被ダメージ−25%。', mods: { startDr: 0.25 } },
+  { id: 'safety', n: '安全第一', ic: '🥽', d: 'プレイヤーHPを20回復し、以後 敗北時のダメージ−1。', now: p => { p.hp = Math.min(100, p.hp + 20); p.dmgCut += 1; } },
+];
+
+export const BOT_NAMES = ['メンデレーエフ', 'ラボアジエ', 'アボガドロ', 'ドルトン', 'キュリー', 'ハーバー', 'ノーベル', 'ボイル', 'ファラデー', 'ルシャトリエ', 'ケクレ', 'アレニウス'];
