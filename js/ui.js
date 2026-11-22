@@ -9,6 +9,7 @@ import { LORE, titleOf } from './lore.js';
 import { applyIntent } from './intents.js';
 import { Session, savedName, saveName } from './net/session.js';
 import { normCode, cleanName, NAME_MAX } from './net/proto.js';
+import { sfx, musicMode, snd, setSound } from './audio.js';
 
 const $ = s => document.querySelector(s);
 const el = (tag, cls, html) => { const e = document.createElement(tag); if (cls) e.className = cls; if (html != null) e.innerHTML = html; return e; };
@@ -29,7 +30,24 @@ let mode = 'solo', net = null, flip = false, deferred = false, augOpen = false, 
 const online = () => mode === 'online';
 const AUG_N = Object.fromEntries(AUGS.map(a => [a.id, a.n]));
 /** プレイヤー操作。ソロは直接適用、オンラインは予測＋ホストへ送信 */
-const act = it => (online() ? net.act(it) : applyIntent(G, me, it));
+function act(it) {
+  const lv = me.level, r = online() ? net.act(it) : applyIntent(G, me, it);
+  if (!r) { if (it.t !== 'ready' && it.t !== 'lock') sfx('error'); return r; }
+  switch (it.t) {
+    case 'buy': { const m = G.allUnits(me).find(u => u.justMerged && Date.now() - u.justMerged < 80); sfx(m ? (m.star >= 3 ? 'merge3' : 'merge2') : 'buy'); break; }
+    case 'sell': sfx('sell'); break;
+    case 'roll': sfx('roll'); break;
+    case 'xp': sfx(me.level > lv ? 'levelup' : 'xp'); break;
+    case 'lock': sfx('lock'); break;
+    case 'move': sfx(r === 'full' ? 'error' : 'place'); break;
+    case 'equip': sfx(r === 'full' ? 'error' : r === 'combined' ? 'craft' : 'equip'); break;
+    case 'aug': sfx('aug'); break;
+  }
+  return r;
+}
+// 準備時間の残り5秒を1秒ごとに知らせる
+let tickSec = -1;
+function tickSnd(left) { const s = Math.ceil(left / 1000); if (s !== tickSec) { tickSec = s; if (s >= 1 && s <= 5 && G && G.phase === 'plan') sfx('tick'); } }
 
 // ---------- 座標 ----------
 const cellXY = (c, r) => [c * hexW + (r & 1 ? hexW / 2 : 0) + hexW / 2, r * hexH * 0.75 + hexH / 2];
@@ -38,7 +56,7 @@ function layout() {
   const b0 = $('#board'); b0.style.width = b0.style.height = '0px';
   const w = $('#boardWrap'); w.style.flex = '';
   const W = w.clientWidth, H = w.clientHeight;
-  hexW = Math.max(30, Math.min(W / 7.8, H / 7.5, 88)); hexH = hexW * 1.1547;
+  hexW = Math.max(22, Math.min(W / 7.8, H / 7.5, 88)); hexH = hexW * 1.1547;
   // スマホで縦に余裕があれば、六角を少しだけ縦長にして盤面を大きく使う（最大8%）
   if (NARROW.matches) hexH = Math.max(hexH, Math.min(hexH * 1.08, (H - hexW * .2 - 12) / 6.25));
   document.documentElement.style.setProperty('--hw', hexW + 'px');
@@ -94,7 +112,7 @@ function renderTop() {
   $('#app').classList.toggle('spectate', !me.alive);
   $('#oppTag').textContent = ph === 'plan' ? '' : (bt && bt.oppName ? '▲ ' + bt.oppName : '');
   const n = me.board.length, mx = G.maxUnits(me), cap = $('#capTag');
-  cap.textContent = `配置 ${n}/${mx}`; cap.className = n > mx ? 'over' : n < mx && me.bench.some(Boolean) ? 'under' : '';
+  cap.textContent = `${n}/${mx}`; cap.title = '盤面に配置している数 / 配置上限（レベルで増える）'; cap.className = n > mx ? 'over' : n < mx && me.bench.some(Boolean) ? 'under' : '';
 }
 
 function renderTraits() {
@@ -134,7 +152,7 @@ function renderBench() {
 }
 
 function renderItems() {
-  const row = $('#itemsRow'); row.innerHTML = '';
+  const row = $('#itemsRow'); row.innerHTML = ''; row.classList.toggle('empty', !me.items.length);
   if (!me.items.length) { row.appendChild(el('span', 'lbl', '器具なし（実験ラウンドで入手 → ユニットにドラッグ）')); return; }
   me.items.forEach((id, i) => { const d = el('div', 'item' + (ITEMS[id].comp ? '' : ' full'), ITEMS[id].ic); d.dataset.ii = i; d.title = ITEMS[id].n; row.appendChild(d); });
 }
@@ -156,7 +174,7 @@ function renderShop() {
   $('#gold').textContent = '💰' + me.gold;
   const s = Math.abs(me.streak), inc = (G.stage === 1 ? 3 : 5) + Math.min(me.intCap, Math.floor(me.gold / 10)) + (s >= 5 ? 3 : s >= 4 ? 2 : s >= 2 ? 1 : 0);
   $('#incomeLbl').textContent = `次R +${inc}（利息${Math.min(me.intCap, Math.floor(me.gold / 10))}）`;
-  $('#lvLbl').textContent = `Lv.${me.level}` + (me.level < MAX_LEVEL ? `　XP ${me.xp}/${XP_NEED[me.level]}` : '　MAX');
+  $('#lvLbl').innerHTML = `<b>Lv.${me.level}</b><span>${me.level < MAX_LEVEL ? `XP ${me.xp}/${XP_NEED[me.level]}` : 'MAX'}</span>`;
   $('#xpBar i').style.width = (me.level < MAX_LEVEL ? me.xp / XP_NEED[me.level] * 100 : 100) + '%';
   $('#btnXP').disabled = me.gold < 4 || me.level >= MAX_LEVEL;
   $('#btnRoll').disabled = me.gold < me.rerollCost; $('#rollCost').textContent = me.rerollCost + 'G';
@@ -269,6 +287,7 @@ function showDex(tab = 'how') {
 }
 
 function showStart() {
+  musicMode('title');
   const parade = ['Li', 'Cl2', 'C6H6', 'Au', 'Aqua', 'Ne', 'KMnO4'];
   const tiles = [['1', 'H', '水素'], ['6', 'C', '炭素'], ['8', 'O', '酸素'], ['79', 'Au', '金']];
   modal(`<div class="ttl">
@@ -304,6 +323,7 @@ function closeAug() { if (augOpen) { augOpen = false; closeModal(); } }
 
 function showOver() {
   const p = G.place, win = p === 1;
+  musicMode('title'); if (win) sfx('champion');
   const best = me.board.slice().sort((a, b) => UNITS[b.id].cost * b.star - UNITS[a.id].cost * a.star).slice(0, 5);
   const ranks = online() ? `<div class="ranks">${G.players.slice().sort((a, b) => (a.place || 9) - (b.place || 9)).map(q => `<div class="rk${q === me ? ' me' : ''}${q.human ? ' hu' : ''}"><b>${q.place || '-'}</b><span>${esc(q.name)}</span>${q.human ? `<em>${q.away ? '離席' : 'プレイヤー'}</em>` : '<em>AI</em>'}</div>`).join('')}</div>` : '';
   modal(`<div class="over ${win ? 'win' : ''}"><div class="place">${win ? '🏆' : p + '<small>位</small>'}</div>
@@ -325,7 +345,7 @@ function newGame() {
 function enterPlan() {
   if (online()) return enterPlanOnline();
   bt = null; $('#banner').classList.remove('show'); $('#fx').innerHTML = '';
-  render();
+  render(); musicMode('plan'); sfx('round');
   const pve = G.isPvE(), o = G.opponent;
   stageFx(`ROUND ${G.label}`, pve ? '実験ラウンド ― 不純物を取り除け' : o ? `次の対戦：${esc(o.name)}${!o.human && titleOf(o.name) ? `「${titleOf(o.name)}」` : ''}` : '');
   if (G.pendingAug) showAug(); else startTimer();
@@ -334,13 +354,13 @@ function startTimer() {
   clearInterval(timerId); const bar = $('#timerBar i');
   if (online()) { // ホストが決めた締め切りまでの残り時間を表示するだけ（締め切りの判定はホスト）
     planDur = G.planTime() * 1000;
-    const tick = () => { bar.style.width = Math.max(0, (net.client.deadline - performance.now()) / planDur * 100) + '%'; };
+    const tick = () => { const left = net.client.deadline - performance.now(); bar.style.width = Math.max(0, left / planDur * 100) + '%'; if (me.alive) tickSnd(left); };
     tick(); timerId = setInterval(tick, 100); return;
   }
   if (!opts.timer) { bar.style.width = '100%'; return; }
   planDur = G.planTime() * 1000; planEnd = performance.now() + planDur;
   timerId = setInterval(() => {
-    const left = planEnd - performance.now(); bar.style.width = Math.max(0, left / planDur * 100) + '%';
+    const left = planEnd - performance.now(); bar.style.width = Math.max(0, left / planDur * 100) + '%'; tickSnd(left);
     if (left <= 0) go();
   }, 100);
 }
@@ -350,7 +370,7 @@ function go() {
   clearInterval(timerId); cancelDrag(); hideInfo();
   const f = G.myFight(), ghost = f && f.ghost;
   G.startCombat(); bt = G.battle; bt.oppName = G.opponent ? G.opponent.name + (ghost ? '（影）' : '') : '実験：不純物';
-  render(); buildBattleTokens(); stageFx('反応開始', esc(bt.oppName), 'go');
+  render(); buildBattleTokens(); stageFx('反応開始', esc(bt.oppName), 'go'); musicMode('combat'); sfx('fight');
   playBattle(() => setTimeout(endCombat, 900));
 }
 // 戦闘の再生（ソロ・オンライン共通）。オンラインは常に ×1
@@ -373,6 +393,7 @@ function showBanner(r) {
   b.className = r.win ? 'win' : r.draw ? 'draw' : 'lose';
   b.innerHTML = `<span class="bt">${r.win ? '勝利' : r.draw ? '時間切れ' : '敗北'}</span><small>${r.win ? '反応系は盤上に残った' : r.draw ? '反応は平衡に達した' : '反応系が崩れた'}${r.dmg ? `　−${r.dmg} HP` : ''}</small>`;
   void b.offsetWidth; b.classList.add('show');
+  musicMode('plan'); sfx(r.win ? 'win' : r.draw ? 'draw' : 'lose'); if (r.loot && r.loot.items) sfx('loot');
   if (r.loot && r.loot.items) toast('入手：' + r.loot.items.map(i => ITEMS[i].ic + ITEMS[i].n).join('　') + (r.loot.gold ? `　💰+${r.loot.gold}` : ''));
 }
 function endCombat() {
@@ -506,7 +527,7 @@ function onSnap(s) {
 function enterPlanOnline() {
   cancelAnimationFrame(raf); bt = null; flip = false; replay = null;
   $('#banner').classList.remove('show'); $('#fx').innerHTML = '';
-  render();
+  render(); musicMode('plan'); sfx('round');
   const pve = G.isPvE(), o = G.opponent;
   if (me.alive) stageFx(`ROUND ${G.label}`, pve ? '実験ラウンド ― 不純物を取り除け' : o ? `次の対戦：${esc(o.name)}${!o.human && titleOf(o.name) ? `「${titleOf(o.name)}」` : ''}` : '');
   else stageFx(`ROUND ${G.label}`, '観戦中');
@@ -517,6 +538,7 @@ function onCombat(m) {
   if (keys.combat === m.label) return; keys.combat = m.label;
   clearInterval(timerId); closeAug(); cancelDrag(); hideInfo();
   const seat = net.seat, f = m.fights.find(x => x.a === seat || (x.b === seat && !x.ghost));
+  musicMode('combat'); sfx('fight');
   if (!f) { render(); stageFx('反応開始', '観戦中', 'go'); return; }
   flip = f.a !== seat; // 自分がチーム1なら描画だけ180°回す（シミュレーションはホストと同じ向きで作る）
   bt = new Battle(f.A, f.B, f.seed, true);
@@ -602,14 +624,16 @@ function playEvents() {
   for (const e of evs) {
     switch (e.k) {
       case 'dmg': {
+        if (!e.dot) sfx(e.crit ? 'crit' : 'hit');
         if (e.dot && e.a < 12) break;
         const [x, y] = unitXY(e.u), j = (Math.random() - .5) * hexW * .5;
         ftext(x + j, y - hexW * .3, Math.round(e.a) + (e.crit ? '!' : ''), e.type === 'phys' ? '#ffb38a' : e.type === 'magic' ? '#9ad1ff' : '#ffffff', e.crit ? 'big' : '');
         break;
       }
-      case 'heal': { const [x, y] = unitXY(e.u); ftext(x, y - hexW * .2, '+' + Math.round(e.a), '#6dff9c'); break; }
-      case 'text': { const [x, y] = unitXY(e.u); ftext(x, y - hexW * .5, e.s, e.col, e.big ? 'big' : '', 900); break; }
+      case 'heal': { sfx('heal'); const [x, y] = unitXY(e.u); ftext(x, y - hexW * .2, '+' + Math.round(e.a), '#6dff9c'); break; }
+      case 'text': { if (e.big) sfx('neutral'); const [x, y] = unitXY(e.u); ftext(x, y - hexW * .5, e.s, e.col, e.big ? 'big' : '', 900); break; }
       case 'cast': {
+        sfx('cast');
         const [x, y] = unitXY(e.u); ftext(x, y - hexW * .62, e.s, '#7df9ff', 'skill', 1100);
         const b = btEls.get(e.u.uid); if (b && !RM.matches) b.body.animate([{ transform: 'scale(1)' }, { transform: 'scale(1.35)', boxShadow: '0 0 18px #7df9ff' }, { transform: 'scale(1)' }], { duration: 350 / sp });
         break;
@@ -617,6 +641,7 @@ function playEvents() {
       case 'atk': {
         const [ax, ay] = unitXY(e.a), [bx, by] = unitXY(e.b);
         if (e.ranged) {
+          sfx('shot');
           if (box.childElementCount > 70) break;
           const p = el('div', 'proj'); p.style.background = (e.a.team ^ flip) ? '#ff9aa8' : '#9fd0ff'; box.appendChild(p);
           p.animate([{ transform: `translate(${ax}px,${ay}px)` }, { transform: `translate(${bx}px,${by}px)` }], { duration: 150 / sp }).onfinish = () => p.remove();
@@ -627,6 +652,7 @@ function playEvents() {
         break;
       }
       case 'aoe': {
+        if (e.r >= 1) sfx('boom');
         const [x, y] = bxy(e.pos.c, e.pos.r), s = (2 * e.r + 1) * hexW, r = el('div', 'ring');
         r.style.cssText = `left:${x}px;top:${y}px;width:${s}px;height:${s}px;--col:${e.col}`; box.appendChild(r);
         r.animate([{ transform: 'translate(-50%,-50%) scale(.2)', opacity: 1 }, { transform: 'translate(-50%,-50%) scale(1)', opacity: 0 }], { duration: 480 / sp, easing: 'ease-out' }).onfinish = () => r.remove();
@@ -638,7 +664,7 @@ function playEvents() {
         l.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 340 / sp }).onfinish = () => l.remove();
         break;
       }
-      case 'death': { const b = btEls.get(e.u.uid); if (b) b.t.classList.add('dead'); break; }
+      case 'death': { sfx('death'); const b = btEls.get(e.u.uid); if (b) b.t.classList.add('dead'); break; }
     }
   }
 }
@@ -677,7 +703,7 @@ document.addEventListener('pointermove', e => {
     if (Math.hypot(e.clientX - drag.x, e.clientY - drag.y) < 7) return;
     const u = drag.kind === 'unit' ? myUnit(drag.uid) : null;
     if (drag.kind === 'unit' && (!u || (me.board.includes(u) && G.phase !== 'plan'))) { drag = null; return; }
-    drag.on = true; hideInfo();
+    drag.on = true; hideInfo(); sfx('pick');
     const g = drag.src.cloneNode(true); g.classList.add('ghost'); g.style.transform = ''; g.style.left = g.style.top = '0';
     document.body.appendChild(g); drag.ghost = g; drag.src.classList.add('srcDrag');
     document.body.classList.add('dragging'); if (drag.kind === 'unit') { document.body.classList.add('dragUnit'); $('#sellHint').textContent = `売却 +${sellValue(u)}G`; }
@@ -722,9 +748,26 @@ function drop(d, t) {
     act({ t: 'move', uid: u.uid, to: { bench: t.i } });
   }
 }
+// タッチ端末では、ドラッグを離した直後（約0.3秒以内）のタップにブラウザが click を出さないことがある。
+// 動かさず短く触れて離したのに click が来なければ、こちらで click を発生させる。
+let tapStart = null, synth = null;
+document.addEventListener('pointerdown', e => { tapStart = e.pointerType === 'touch' ? { id: e.pointerId, x: e.clientX, y: e.clientY, t: performance.now(), el: e.target } : null; }, true);
+document.addEventListener('pointerup', e => {
+  const s0 = tapStart; tapStart = null;
+  if (!s0 || e.pointerId !== s0.id || e.pointerType !== 'touch' || e.target !== s0.el) return;
+  if (Math.hypot(e.clientX - s0.x, e.clientY - s0.y) > 10 || performance.now() - s0.t > 700) return;
+  const t = e.target; if (t.closest('input, label, select, textarea, a, .token, .item')) return;
+  let native = false; const seenClick = ev => { if (ev.isTrusted) native = true; };
+  document.addEventListener('click', seenClick, true);
+  setTimeout(() => { document.removeEventListener('click', seenClick, true); if (!native && t.isConnected) { synth = { el: t, t: performance.now() }; t.click(); } }, 80);
+}, true);
+document.addEventListener('click', e => { // 遅れて届いた本物の click で二重に反応しないようにする
+  if (e.isTrusted && synth && e.target === synth.el && performance.now() - synth.t < 600) { e.stopImmediatePropagation(); e.preventDefault(); synth = null; }
+}, true);
 document.addEventListener('pointerup', endPointer);
 document.addEventListener('pointercancel', endPointer);
 document.addEventListener('click', e => {
+  const cb = e.target.closest('button, .pl, .trait, .mode'); if (cb && !['btnXP', 'btnRoll', 'btnLock'].includes(cb.id)) sfx('click');
   const bt_ = e.target.closest('.token[data-bid]');
   if (bt_ && bt) { const u = bt.units[+bt_.dataset.bid]; if (u) showUnitInfo(u.def.id, u.star, u.items, u.alive ? u : null); return; }
   if (!e.target.closest('#info') && !e.target.closest('.token') && !e.target.closest('.item') && !e.target.closest('.card') && !e.target.closest('.trait')) hideInfo();
@@ -735,6 +778,29 @@ document.addEventListener('contextmenu', e => e.preventDefault());
 $('#btnGo').onclick = go;
 $('#btnSpeed').onclick = () => { if (online()) return; speed = speed === 1 ? 2 : speed === 2 ? 4 : 1; $('#btnSpeed').textContent = '×' + speed; };
 $('#btnDex').onclick = () => showDex('how');
+// サウンド設定
+function syncSnd() { $('#btnSnd').textContent = snd.sfx || snd.music ? '🔊' : '🔇'; }
+$('#btnSnd').onclick = e => {
+  e.stopPropagation();
+  if (!$('#info').hidden && $('#sVol')) return hideInfo();
+  showInfo(`<h3>サウンド</h3>
+    <label class="sndRow"><input type="checkbox" id="sSfx" ${snd.sfx ? 'checked' : ''}> 効果音・振動</label>
+    <label class="sndRow"><input type="checkbox" id="sMus" ${snd.music ? 'checked' : ''}> BGM</label>
+    <label class="sndRow">音量 <input type="range" id="sVol" min="0" max="100" value="${Math.round(snd.vol * 100)}"></label>`);
+  $('#sSfx').onchange = ev => { setSound('sfx', ev.target.checked); syncSnd(); sfx('buy'); };
+  $('#sMus').onchange = ev => { setSound('music', ev.target.checked); syncSnd(); };
+  $('#sVol').oninput = ev => setSound('vol', ev.target.value / 100);
+  $('#sVol').onchange = () => sfx('buy');
+};
+syncSnd();
+// ショップの開閉（スマホで盤面を広く使うため）。状態は端末に保存
+const SHOP_KEY = 'autochemyth.shopClosed';
+function setShop(closed) {
+  $('#app').classList.toggle('shopClosed', closed); $('#btnShop').textContent = closed ? '▲' : '▼'; $('#btnShop').title = closed ? 'ショップを開く' : 'ショップを閉じる';
+  try { localStorage.setItem(SHOP_KEY, closed ? '1' : ''); } catch { /* 保存できなくても動作に支障なし */ }
+}
+$('#btnShop').onclick = () => setShop(!$('#app').classList.contains('shopClosed'));
+{ let c = false; try { c = !!localStorage.getItem(SHOP_KEY); } catch { /* 既定は開いた状態 */ } setShop(c); }
 $('#btnXP').onclick = () => { if (G && act({ t: 'xp' })) render(); };
 $('#btnRoll').onclick = () => { if (G && act({ t: 'roll' })) render(); };
 $('#btnLock').onclick = () => { if (G && act({ t: 'lock', on: !me.lock })) renderShop(); };
@@ -750,7 +816,8 @@ document.addEventListener('keydown', e => {
   if (e.code === 'KeyD') $('#btnRoll').click(); else if (e.code === 'KeyF') $('#btnXP').click(); else if (e.code === 'Space') { e.preventDefault(); go(); }
 });
 window.addEventListener('resize', layout);
+// 盤面に使える領域（中央カラム）の大きさが変わったら盤面を引き直す。ショップの開閉や画面回転、アドレスバーの出入りを含む
 let roW = 0, roH = 0;
-new ResizeObserver(() => { const w = $('#boardWrap'); if (Math.abs(w.clientWidth - roW) + Math.abs(w.clientHeight - roH) > 2) { roW = w.clientWidth; roH = w.clientHeight; layout(); } }).observe($('#boardWrap'));
+new ResizeObserver(() => { const w = $('#center'); if (Math.abs(w.clientWidth - roW) + Math.abs(w.clientHeight - roH) > 2) { roW = w.clientWidth; roH = w.clientHeight; layout(); } }).observe($('#center'));
 // 招待リンク（?room=CODE）で開いたら参加画面から
 { const c = normCode(new URLSearchParams(location.search).get('room')); if (c) showOnline(c); else showStart(); }
