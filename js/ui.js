@@ -22,6 +22,30 @@ const TOK_VB = '16 7 68 68', CARD_VB = '6 2 88 88';
 const RM = window.matchMedia ? matchMedia('(prefers-reduced-motion: reduce)') : { matches: false };
 const seen = new Set(); let seenOn = false; // 購入演出用：既に表示したユニット
 installFigures();
+// 3Dステージ（WebGL が使えない環境では従来の平面表示のまま）。起動を待たせないよう、タイトルを出してから読み込む
+let stage = null, PIC = {}, cellWorld = null;
+async function initStage() {
+  try {
+    const gfx = await import('./gfx/stage.js');
+    const st = new gfx.Stage(document.querySelector('#boardWrap'));
+    if (!st.ok) return;
+    cellWorld = gfx.cellWorld; stage = st; window.__stage = st; document.querySelector('#app').classList.add('g3');
+    if (G) { layout(); render(); } else if (!net && !document.querySelector('#modal').hidden && document.querySelector('#mSolo')) showStart();
+    // 肖像は数体ずつ作り、できた順に画面へ差し込む
+    const queue = Object.keys(UNITS);
+    const pump = () => {
+      const t0 = performance.now();
+      while (queue.length && performance.now() - t0 < 14) { const id = queue.shift(); PIC[id] = stage.portrait(id); document.querySelectorAll(`img[data-pic="${id}"]`).forEach(im => { im.src = PIC[id]; }); }
+      if (queue.length) setTimeout(pump, 24);
+    };
+    pump();
+  } catch (e) { console.warn('[gfx] 3D表示を使えないため平面表示に切り替えます', e); stage = null; }
+}
+const hexInt = c => parseInt(String(c).replace('#', ''), 16) || 0xffffff;
+/** 物質の絵：3Dモデルの肖像（なければ従来のSVG） */
+const BLANK = 'data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==';
+const pic = (id, cls = 'fig', vb) => (stage ? `<img class="${cls}" data-pic="${id}" src="${PIC[id] || BLANK}" alt="" draggable="false">` : figure(id, cls, vb));
+const TOKEN_Y = .8; // 駒のDOM（当たり判定・HPバー）を重ねる高さ
 
 let G = null, me = null, hexW = 60, hexH = 69, speed = 1, bt = null /*表示中の戦闘*/, btEls = new Map(), raf = 0;
 let planEnd = 0, planDur = 0, timerId = 0, drag = null, opts = { diff: 'normal', timer: true };
@@ -50,9 +74,27 @@ let tickSec = -1;
 function tickSnd(left) { const s = Math.ceil(left / 1000); if (s !== tickSec) { tickSec = s; if (s >= 1 && s <= 5 && G && G.phase === 'plan') sfx('tick'); } }
 
 // ---------- 座標 ----------
-const cellXY = (c, r) => [c * hexW + (r & 1 ? hexW / 2 : 0) + hexW / 2, r * hexH * 0.75 + hexH / 2];
+const cellXY = (c, r) => { if (stage) { const [x, z] = cellWorld(c, r); return stage.project(x, TOKEN_Y, z); } return [c * hexW + (r & 1 ? hexW / 2 : 0) + hexW / 2, r * hexH * 0.75 + hexH / 2]; };
+// 3D表示：盤面は透視投影なので、マスごとに画面上の大きさが違う
+const cellPx = (c, r) => { const [x, z] = cellWorld(c, r); return Math.max(20, Math.min(90, stage.cellSize(x, z)[0])); };
+function layout3() {
+  const w = $('#boardWrap'); w.style.flex = '';
+  const W = w.clientWidth, H = w.clientHeight; if (W < 2 || H < 2) return;
+  stage.resize(W, H);
+  const b = $('#board'); b.style.width = W + 'px'; b.style.height = H + 'px';
+  hexW = cellPx(3, 5); hexH = hexW * 1.1547;
+  document.documentElement.style.setProperty('--hw', Math.min(hexW, 66) + 'px');
+  const cells = $('#cells'); cells.innerHTML = '';
+  for (let r = 4; r < ROWS; r++) for (let c = 0; c < COLS; c++) { // 当たり判定用の透明なマス（自陣のみ）
+    const [x, z] = cellWorld(c, r), [px, py] = stage.project(x, 0, z), [cw, ch] = stage.cellSize(x, z), d = el('div', 'cell me');
+    d.style.cssText = `left:${px - cw / 2}px;top:${py - ch / 2}px;width:${cw}px;height:${ch}px`;
+    d.dataset.drop = 'hex'; d.dataset.c = c; d.dataset.r = r - 4; cells.appendChild(d);
+  }
+  if (G) { renderBoard(true); if (bt) updateTokens(); }
+}
 const NARROW = window.matchMedia ? matchMedia('(max-width: 860px)') : { matches: false };
 function layout() {
+  if (stage) return layout3();
   const b0 = $('#board'); b0.style.width = b0.style.height = '0px';
   const w = $('#boardWrap'); w.style.flex = '';
   const W = w.clientWidth, H = w.clientHeight;
@@ -75,19 +117,19 @@ function layout() {
 
 // ---------- トークン ----------
 function fsize(s) { const n = [...s].length; return n <= 2 ? .22 : n <= 4 ? .2 : n === 5 ? .18 : n <= 7 ? .165 : .15; }
-function mkToken(id, star, items, team, bars) {
+function mkToken(id, star, items, team, bars, on3d) {
   const d = UNITS[id], f = SHORT[id] || d.f;
   const t = el('div', `token c${d.cost} t${team}`);
   t.innerHTML = (bars ? '<div class="bars"><div class="bar hp"><i class="h"></i><i class="s"></i></div><div class="bar mp"><i></i></div></div>' : '') +
-    `<div class="body">${figure(id, 'fig', TOK_VB)}</div><div class="np" style="--fs:${fsize(f)}">${f}</div>` +
+    `<div class="body">${on3d ? '' : pic(id, 'fig', TOK_VB)}</div><div class="np" style="--fs:${fsize(f)}">${f}</div>` +
     (d.mob ? '' : `<div class="stars s${star}">${'★'.repeat(star)}</div>`) +
     `<div class="its">${(items || []).map(i => `<span>${ITEMS[i].ic}</span>`).join('')}</div>` + (bars ? '<div class="tag"></div>' : '');
   return t;
 }
-function place(t, c, r) { const [x, y] = cellXY(c, r); t.style.transform = `translate(${x}px,${y}px)`; }
+function place(t, c, r) { const [x, y] = cellXY(c, r); t.style.transform = `translate(${x}px,${y}px)`; if (stage) t.style.setProperty('--hw', cellPx(c, r) + 'px'); }
 // 戦闘座標 → 画面座標。flip 時は盤面を180°回転（odd-r の六角格子では (c,r)→(6-c,7-r) がちょうど点対称）
 const bxy = (c, r) => (flip ? cellXY(COLS - 1 - c, ROWS - 1 - r) : cellXY(c, r));
-// 名札が化身より横に広いときは横方向に縮めて収める
+// 名札が構造体より横に広いときは横方向に縮めて収める
 function fitPlates(root) {
   const m = [...root.querySelectorAll('.token .np')].map(n => [n, n.offsetWidth, n.parentElement.offsetWidth]);
   for (const [n, w, tw] of m) n.style.setProperty('--sx', w > tw && tw > 0 ? (tw / w).toFixed(3) : '1');
@@ -101,7 +143,7 @@ function renderTop() {
   $('#stageLbl').textContent = G.label;
   const pve = G.isPvE(); $('#roundKind').textContent = pve ? '実験' : '対戦'; $('#roundKind').className = pve ? 'pve' : 'pvp';
   const ph = G.phase;
-  $('#phaseLbl').textContent = !me.alive ? `脱落（${me.place}位）｜ 観戦中` : ph === 'plan' ? (pve ? '召喚準備 ｜ 実験：不純物を取り除け' : `召喚準備 ｜ 次の相手: ${G.opponent ? G.opponent.name : '?'}`) : ph === 'combat' ? '反応中' : '判定';
+  $('#phaseLbl').textContent = !me.alive ? `脱落（${me.place}位）｜ 観戦中` : ph === 'plan' ? (pve ? '投影準備 ｜ 実験：不純物を取り除け' : `投影準備 ｜ 次の相手: ${G.opponent ? G.opponent.name : '?'}`) : ph === 'combat' ? '反応中' : '判定';
   const bg = $('#btnGo');
   if (online()) { // 準備完了：生存中で接続中の人間が全員押したらホストが戦闘を始める
     const hs = G.players.filter(p => p.human && p.alive && !p.away), rd = hs.filter(p => p.ready).length;
@@ -134,11 +176,12 @@ function renderBoard(force) {
   if (G.phase !== 'plan') { if (bt) buildBattleTokens(); return; }
   const box = $('#tokens'); box.innerHTML = ''; btEls.clear();
   for (const u of me.board) {
-    const t = mkToken(u.id, u.star, u.items, 0); t.dataset.uid = u.uid; t.dataset.c = u.c; t.dataset.r = u.r;
+    const t = mkToken(u.id, u.star, u.items, 0, false, !!stage); t.dataset.uid = u.uid; t.dataset.c = u.c; t.dataset.r = u.r;
     if (u.justMerged && Date.now() - u.justMerged < 800) t.classList.add('merge'); else if (isNew(u)) t.classList.add('enter');
     seen.add(u.uid); place(t, u.c, 4 + u.r); box.appendChild(t);
   }
   fitPlates(box);
+  if (stage) stage.setUnits(me.board.map(u => { const [x, z] = cellWorld(u.c, 4 + u.r), d = UNITS[u.id]; return { key: 'p' + u.uid, id: u.id, team: 0, cost: d.cost, star: u.star, aura: hexInt(auraOf(u.id)), x, z, pop: u.justMerged && Date.now() - u.justMerged < 800 }; }));
 }
 
 function renderBench() {
@@ -197,7 +240,7 @@ function renderScore() {
 // 標本カード（ショップ・図鑑共通）
 function cardHtml(id, cnt = {}) {
   const d = UNITS[id], f = SHORT[id] || d.f, n = [...f].length;
-  return `<div class="art" style="--au:${auraOf(id)}">${figure(id, 'fig', CARD_VB)}</div><div class="cost">${d.cost}</div>` +
+  return `<div class="art" style="--au:${auraOf(id)}">${pic(id, 'fig', CARD_VB)}</div><div class="cost">${d.cost}</div>` +
     `<div class="meta"><span class="fm${n > 5 ? ' long' : ''}">${f}</span><span class="nm">${d.n}</span></div>` +
     `<div class="trs">${d.traits.map(t => `<span class="${cnt[t] ? 'act' : ''}" style="--tc:${TRAITS[t].col}" title="${TRAITS[t].n}">${TRAIT_ICON[t]}<em>${TRAITS[t].n}</em></span>`).join('')}</div>`;
 }
@@ -214,7 +257,7 @@ function showUnitInfo(id, star, items, live) {
   const d = UNITS[id], sm = star - 1;
   const st = live ? [Math.ceil(live.hp) + '/' + Math.round(live.maxHp), Math.round(live.ad), bt.asEff(live).toFixed(2), Math.round(bt.armorEff(live)), Math.round(bt.mrEff(live)), live.range, live.ap]
     : [Math.round(d.hp * STAR_HP[sm]), Math.round(d.ad * STAR_AD[sm]), d.as.toFixed(2), d.armor, d.mr, d.range, 100];
-  showInfo(`<div class="uhead"><div class="medal c${d.cost}" style="--au:${auraOf(id)}">${figure(id)}</div><div class="uh">
+  showInfo(`<div class="uhead"><div class="medal c${d.cost}" style="--au:${auraOf(id)}">${pic(id)}</div><div class="uh">
     <h3>${d.n}</h3><div class="fmrow"><span class="fm">${d.f}</span><span class="costc">${d.mob ? '実験試料' : d.cost + 'G ' + '★'.repeat(star)}</span></div>
     <div class="chips">${d.traits.map(chip).join('')}</div></div></div>
     ${LORE[id] ? `<div class="lore">${LORE[id]}</div>` : ''}
@@ -229,7 +272,7 @@ function showTraitInfo(k, tier) {
     <div style="margin-top:6px">${fmt(T.d, T.v, tier)}</div>
     ${k === 'acid' || k === 'base' ? `<div class="eq">【中和】H⁺ + OH⁻ → H₂O ：${NEUTRAL.flat}＋最大HPの${NEUTRAL.pct}%の魔法ダメージ（中和熱）</div>` : ''}
     <div class="note">📝 ${T.why}</div>
-    <div class="minis">${us.map(u => `<span class="mini c${u.cost}" title="${u.n}">${figure(u.id, 'fig', TOK_VB)}<b>${SHORT[u.id] || u.f}</b></span>`).join('')}</div>`);
+    <div class="minis">${us.map(u => `<span class="mini c${u.cost}" title="${u.n}">${pic(u.id, 'fig', TOK_VB)}<b>${SHORT[u.id] || u.f}</b></span>`).join('')}</div>`);
 }
 function showItemInfo(id) {
   const it = ITEMS[id];
@@ -262,7 +305,7 @@ function showDex(tab = 'how') {
   const tabs = { how: '遊び方', units: '物質', traits: 'シナジー', items: '器具', odds: '確率' };
   let body = '';
   if (tab === 'how') body = `
-    <p><b>Auto-Chemyth</b> は、元素や化合物の<b>化身</b>を集めて六角の反応場「元素盤」に召喚し、7人のライバル化学者と自動で戦わせる化学オートバトラーです。</p>
+    <p><b>Auto-Chemyth</b> は、元素や化合物の<b>構造体</b>を集めて六角の反応場「元素盤」に投影し、7人のライバル化学者と自動で戦わせる化学オートバトラーです。</p>
     <h4>基本の流れ</h4>
     <p>① ショップで物質を買う（同じ物質が3つそろうと ★ が上がる＝精製）<br>② ベンチから盤面の下半分にドラッグして配置（配置数＝レベル）<br>③「反応開始」で自動戦闘。負けると生き残った敵の数に応じてHPが減る<br>④ 最後の1人になれば勝ち</p>
     <h4>化学のルール</h4>
@@ -287,14 +330,15 @@ function showDex(tab = 'how') {
 }
 
 function showStart() {
+  if (stage && !G) stage.setUnits([]);
   musicMode('title');
   const parade = ['Li', 'Cl2', 'C6H6', 'Au', 'Aqua', 'Ne', 'KMnO4'];
   const tiles = [['1', 'H', '水素'], ['6', 'C', '炭素'], ['8', 'O', '酸素'], ['79', 'Au', '金']];
   modal(`<div class="ttl">
     <div class="tiles">${tiles.map(([z, s, n]) => `<span class="etile"><i>${z}</i><b>${s}</b><em>${n}</em></span>`).join('')}</div>
-    <div class="logo"><div class="pre">化学アカデミー ・ 元素盤</div><h1>Auto<span>-</span>Chemyth</h1><div class="sub">化身たちの反応場</div></div>
-    <div class="parade">${parade.map((id, i) => `<div class="pm c${UNITS[id].cost}" style="--au:${auraOf(id)};--i:${i}">${figure(id, 'fig', TOK_VB)}</div>`).join('')}</div>
-    <p class="intro">化学アカデミーの奥に据えられた六角の反応場「元素盤」。化学者たちは物質の<b>化身</b>を召喚し、族と性質の共鳴を組み上げ、実際の化学反応で相手の実験を崩していく。最後まで盤上に残った反応系だけが勝者となる。</p>
+    <div class="logo"><div class="pre">CHEMYTH LAB ・ 元素盤</div><h1>Auto<span>-</span>Chemyth</h1><div class="sub">構造体たちの反応場</div></div>
+    <div class="parade">${parade.map((id, i) => `<div class="pm c${UNITS[id].cost}" style="--au:${auraOf(id)};--i:${i}">${pic(id, 'fig', TOK_VB)}</div>`).join('')}</div>
+    <p class="intro">近未来の研究施設〈CHEMYTH LAB〉の中枢に据えられた六角の反応場「元素盤」。化学者たちは物質の<b>構造体</b>をホログラムとして投影し、族と性質の共鳴を組み上げ、実際の化学反応で相手の実験を崩していく。最後まで盤上に残った反応系だけが勝者となる。</p>
     <p class="intro sm">酸と塩基で<b>中和</b>、塩酸は<b>イオン化傾向</b>で特効、鉄は濃硝酸に<b>不動態</b>、金は<b>王水</b>でしか溶けない——盤面の強さは、そのまま化学の知識になる。</p>
     <div class="modes">
       <button class="mode primary" id="mSolo"><b>ソロ</b><small>7人のライバルAIと対戦</small></button>
@@ -303,7 +347,7 @@ function showStart() {
     <div class="opts"><div class="row"><span class="ol">難易度</span><span class="seg" id="segDiff">${Object.keys(DIFFS).map(k => `<button data-v="${k}" class="${k === opts.diff ? 'on' : ''}">${DIFFS[k].n}</button>`).join('')}</span></div>
     <div class="row"><span class="ol">準備時間</span><span class="seg" id="segTimer"><button data-v="1" class="${opts.timer ? 'on' : ''}">制限あり</button><button data-v="0" class="${opts.timer ? '' : 'on'}">じっくり（無制限）</button></span></div></div>
     <div class="row go"><button id="mHow">遊び方・図鑑</button></div>
-    <div class="foot">41種の化身 ・ 14の族と性質 ・ 最大8人で対戦</div></div>`, 'titleBox');
+    <div class="foot">41種の構造体 ・ 14の族と性質 ・ 最大8人で対戦</div></div>`, 'titleBox');
   seg('#segDiff', v => { opts.diff = v; }); seg('#segTimer', v => { opts.timer = v === '1'; });
   $('#mSolo').onclick = () => { closeModal(); newGame(); };
   $('#mOnline').onclick = () => showOnline();
@@ -328,9 +372,9 @@ function showOver() {
   const ranks = online() ? `<div class="ranks">${G.players.slice().sort((a, b) => (a.place || 9) - (b.place || 9)).map(q => `<div class="rk${q === me ? ' me' : ''}${q.human ? ' hu' : ''}"><b>${q.place || '-'}</b><span>${esc(q.name)}</span>${q.human ? `<em>${q.away ? '離席' : 'プレイヤー'}</em>` : '<em>AI</em>'}</div>`).join('')}</div>` : '';
   modal(`<div class="over ${win ? 'win' : ''}"><div class="place">${win ? '🏆' : p + '<small>位</small>'}</div>
     <h2>${win ? '元素盤の覇者' : '実験終了'}</h2>
-    <p>${win ? 'すべてのライバルの実験を退け、あなたの反応系だけが盤上に残った。アカデミーの記録に、その名が刻まれる。' : p <= 4 ? '上位入賞。シナジーの段階をもう一つ上げれば、元素盤の頂が見える。' : '反応系は崩れた。だが失敗も記録になる。序盤は連敗しても利息で立て直せる——★2を作ってから盤面を広げよう。'}</p>
+    <p>${win ? 'すべてのライバルの実験を退け、あなたの反応系だけが盤上に残った。ラボの記録に、その名が刻まれる。' : p <= 4 ? '上位入賞。シナジーの段階をもう一つ上げれば、元素盤の頂が見える。' : '反応系は崩れた。だが失敗も記録になる。序盤は連敗しても利息で立て直せる——★2を作ってから盤面を広げよう。'}</p>
     ${ranks}
-    <div class="minis">${best.map(u => `<span class="mini c${UNITS[u.id].cost}">${figure(u.id, 'fig', TOK_VB)}<b>${SHORT[u.id] || UNITS[u.id].f}${'★'.repeat(u.star)}</b></span>`).join('')}</div>
+    <div class="minis">${best.map(u => `<span class="mini c${UNITS[u.id].cost}">${pic(u.id, 'fig', TOK_VB)}<b>${SHORT[u.id] || UNITS[u.id].f}${'★'.repeat(u.star)}</b></span>`).join('')}</div>
     <p class="mut">到達ラウンド ${G.label}　／　最終レベル ${me.level}</p>
     <div class="row go"><button class="primary big" id="mAgain">${online() ? 'タイトルへ' : 'もう一度'}</button></div></div>`, 'overBox');
   $('#mAgain').onclick = () => { if (online()) leaveOnline(); else showStart(); };
@@ -415,7 +459,7 @@ function setUrl(code) {
 }
 function showOnline(code = '', err = '') {
   modal(`<div class="ttl online">
-    <div class="logo"><div class="pre">化学アカデミー ・ 元素盤</div><h2>オンライン対戦</h2></div>
+    <div class="logo"><div class="pre">CHEMYTH LAB ・ 元素盤</div><h2>オンライン対戦</h2></div>
     <p class="intro sm">友だちとルームを作って対戦します。2〜8人で遊べて、空いた席はライバルAIが埋めるので常に8人で戦います。</p>
     ${err ? `<div class="err">${esc(err)}</div>` : ''}
     <div class="ofield"><label for="oName">表示名</label><input id="oName" maxlength="${NAME_MAX}" autocomplete="nickname" placeholder="例：アボガドロ好き" value="${esc(savedName())}"></div>
@@ -587,7 +631,7 @@ function stageFx(main, sub, cls = '') {
 function buildBattleTokens() {
   const box = $('#tokens'); box.innerHTML = ''; btEls.clear();
   for (const u of bt.units) {
-    const t = mkToken(u.def.id, u.star, u.items, flip ? 1 - u.team : u.team, true); t.dataset.bid = u.uid;
+    const t = mkToken(u.def.id, u.star, u.items, flip ? 1 - u.team : u.team, true, !!stage); t.dataset.bid = u.uid;
     if (!u.alive) t.classList.add('dead');
     box.appendChild(t);
     btEls.set(u.uid, { t, h: t.querySelector('.h'), s: t.querySelector('.s'), m: t.querySelector('.mp i'), tag: t.querySelector('.tag'), body: t.querySelector('.body'), tags: '' });
@@ -595,15 +639,25 @@ function buildBattleTokens() {
   fitPlates(box);
   updateTokens();
 }
+// 戦闘中の駒のワールド座標（移動中は前のマスとの間を補間。flip 時は180°回す）
+function unitW(u) {
+  const f = (c, r) => (flip ? cellWorld(COLS - 1 - c, ROWS - 1 - r) : cellWorld(c, r));
+  let [x, z] = f(u.pos.c, u.pos.r);
+  if (u.moveT > 0) { const k = u.moveT / MOVE_T, [px, pz] = f(u.prev.c, u.prev.r); x += (px - x) * k; z += (pz - z) * k; }
+  return [x, z];
+}
 function unitXY(u) {
+  if (stage) { const [x, z] = unitW(u); return stage.project(x, TOKEN_Y, z); }
   let [x, y] = bxy(u.pos.c, u.pos.r);
   if (u.moveT > 0) { const k = u.moveT / MOVE_T, [px, py] = bxy(u.prev.c, u.prev.r); x += (px - x) * k; y += (py - y) * k; }
   return [x, y];
 }
 function updateTokens() {
+  if (stage) stage.setUnits(bt.units.map(u => { const [x, z] = unitW(u), d = u.def; return { key: 'b' + u.uid, id: d.id, team: flip ? 1 - u.team : u.team, cost: d.cost, star: u.star, aura: hexInt(auraOf(d.id)), x, z, stun: u.st.stun > 0, dead: !u.alive }; }));
   for (const u of bt.units) {
     const e = btEls.get(u.uid); if (!e || !u.alive) continue;
     const [x, y] = unitXY(u); e.t.style.transform = `translate(${x}px,${y}px)`;
+    if (stage) { const row = flip ? ROWS - 1 - u.pos.r : u.pos.r; if (e.row !== row) { e.row = row; e.t.style.setProperty('--hw', cellPx(3, row) + 'px'); } }
     const sh = bt.shieldOf(u), den = Math.max(u.maxHp, u.hp + sh);
     e.h.style.width = u.hp / den * 100 + '%'; e.s.style.left = u.hp / den * 100 + '%'; e.s.style.width = sh / den * 100 + '%';
     e.m.style.width = (u.maxMana ? u.mana / u.maxMana * 100 : 0) + '%';
@@ -624,21 +678,22 @@ function playEvents() {
   for (const e of evs) {
     switch (e.k) {
       case 'dmg': {
-        if (!e.dot) sfx(e.crit ? 'crit' : 'hit');
+        if (!e.dot) { sfx(e.crit ? 'crit' : 'hit'); if (stage) stage.hitFx('b' + e.u.uid, e.crit); }
         if (e.dot && e.a < 12) break;
         const [x, y] = unitXY(e.u), j = (Math.random() - .5) * hexW * .5;
         ftext(x + j, y - hexW * .3, Math.round(e.a) + (e.crit ? '!' : ''), e.type === 'phys' ? '#ffb38a' : e.type === 'magic' ? '#9ad1ff' : '#ffffff', e.crit ? 'big' : '');
         break;
       }
-      case 'heal': { sfx('heal'); const [x, y] = unitXY(e.u); ftext(x, y - hexW * .2, '+' + Math.round(e.a), '#6dff9c'); break; }
+      case 'heal': { sfx('heal'); if (stage) stage.healFx('b' + e.u.uid); const [x, y] = unitXY(e.u); ftext(x, y - hexW * .2, '+' + Math.round(e.a), '#6dff9c'); break; }
       case 'text': { if (e.big) sfx('neutral'); const [x, y] = unitXY(e.u); ftext(x, y - hexW * .5, e.s, e.col, e.big ? 'big' : '', 900); break; }
       case 'cast': {
-        sfx('cast');
+        sfx('cast'); if (stage) stage.castFx('b' + e.u.uid);
         const [x, y] = unitXY(e.u); ftext(x, y - hexW * .62, e.s, '#7df9ff', 'skill', 1100);
         const b = btEls.get(e.u.uid); if (b && !RM.matches) b.body.animate([{ transform: 'scale(1)' }, { transform: 'scale(1.35)', boxShadow: '0 0 18px #7df9ff' }, { transform: 'scale(1)' }], { duration: 350 / sp });
         break;
       }
       case 'atk': {
+        if (stage) { if (e.ranged) sfx('shot'); stage.attack('b' + e.a.uid, 'b' + e.b.uid, e.ranged, (e.a.team ^ flip) ? 0xff8fa3 : 0x9fe6ff); break; }
         const [ax, ay] = unitXY(e.a), [bx, by] = unitXY(e.b);
         if (e.ranged) {
           sfx('shot');
@@ -653,18 +708,20 @@ function playEvents() {
       }
       case 'aoe': {
         if (e.r >= 1) sfx('boom');
+        if (stage) { const [wx, wz] = flip ? cellWorld(COLS - 1 - e.pos.c, ROWS - 1 - e.pos.r) : cellWorld(e.pos.c, e.pos.r); stage.ringFx(wx, wz, e.r + .55, hexInt(e.col), .5 + e.r * .12); if (e.r >= 1) stage.burst(wx, .5, wz, hexInt(e.col), 10 + e.r * 8, 2 + e.r); break; }
         const [x, y] = bxy(e.pos.c, e.pos.r), s = (2 * e.r + 1) * hexW, r = el('div', 'ring');
         r.style.cssText = `left:${x}px;top:${y}px;width:${s}px;height:${s}px;--col:${e.col}`; box.appendChild(r);
         r.animate([{ transform: 'translate(-50%,-50%) scale(.2)', opacity: 1 }, { transform: 'translate(-50%,-50%) scale(1)', opacity: 0 }], { duration: 480 / sp, easing: 'ease-out' }).onfinish = () => r.remove();
         break;
       }
       case 'beam': {
+        if (stage) { stage.beamFx(stage.pos('b' + e.a.uid), stage.pos('b' + e.b.uid), hexInt(e.col)); break; }
         const [ax, ay] = unitXY(e.a), [bx, by] = unitXY(e.b), len = Math.hypot(bx - ax, by - ay), ang = Math.atan2(by - ay, bx - ax), l = el('div', 'beam');
         l.style.cssText = `left:${ax}px;top:${ay}px;width:${len}px;transform:rotate(${ang}rad);--col:${e.col}`; box.appendChild(l);
         l.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 340 / sp }).onfinish = () => l.remove();
         break;
       }
-      case 'death': { sfx('death'); const b = btEls.get(e.u.uid); if (b) b.t.classList.add('dead'); break; }
+      case 'death': { sfx('death'); if (stage) stage.kill('b' + e.u.uid); const b = btEls.get(e.u.uid); if (b) b.t.classList.add('dead'); break; }
     }
   }
 }
@@ -675,6 +732,7 @@ function cancelDrag() {
   if (!drag) return;
   if (drag.ghost) drag.ghost.remove(); if (drag.src) drag.src.classList.remove('srcDrag');
   document.body.classList.remove('dragging', 'dragUnit'); document.querySelectorAll('.hover').forEach(e => e.classList.remove('hover'));
+  if (stage) stage.hover(null);
   drag = null;
 }
 function dropTarget(x, y) {
@@ -711,7 +769,8 @@ document.addEventListener('pointermove', e => {
   drag.ghost.style.left = e.clientX + 'px'; drag.ghost.style.top = e.clientY + 'px';
   document.querySelectorAll('.hover').forEach(x => x.classList.remove('hover'));
   const t = dropTarget(e.clientX, e.clientY);
-  if (t && t.el && (drag.kind === 'unit' || t.unit)) (t.type === 'hex' && t.unit ? t.el : t.el).classList.add('hover');
+  if (t && t.el && (drag.kind === 'unit' || t.unit)) t.el.classList.add('hover');
+  if (stage) { if (t && t.type === 'hex' && (drag.kind === 'unit' || t.unit)) stage.hover(t.c, 4 + t.r); else stage.hover(null); }
   e.preventDefault();
 }, { passive: false });
 function endPointer(e) {
@@ -821,3 +880,4 @@ let roW = 0, roH = 0;
 new ResizeObserver(() => { const w = $('#center'); if (Math.abs(w.clientWidth - roW) + Math.abs(w.clientHeight - roH) > 2) { roW = w.clientWidth; roH = w.clientHeight; layout(); } }).observe($('#center'));
 // 招待リンク（?room=CODE）で開いたら参加画面から
 { const c = normCode(new URLSearchParams(location.search).get('room')); if (c) showOnline(c); else showStart(); }
+setTimeout(initStage, 30);

@@ -356,3 +356,19 @@ input:focus { outline: none; border-color: var(--glow); box-shadow: 0 0 0 2px #6
   #stageFx.show { animation: none; opacity: 0; }
   #banner.show { animation: none; }
 }
+
+/* ---------- 3D表示（WebGL）：盤面と駒はキャンバスに描き、DOMは当たり判定・HPバー・名札だけを重ねる ---------- */
+#boardWrap { position: relative; }
+#gl { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+img.fig { width: 100%; height: 100%; object-fit: contain; display: block; pointer-events: none; -webkit-user-drag: none; user-select: none; }
+.g3 #boardWrap { padding: 0 !important; align-items: stretch; }
+.g3 #board { position: absolute; left: 0; top: 0; }
+.g3 #board::before, .g3 #board::after { display: none; }
+.g3 .cell { clip-path: none; background: none; border-radius: 50%; transition: none; }
+.g3 .cell::before, .g3 .cell::after { display: none; }
+.g3 .cell.hover { background: none !important; }
+.g3 #tokens .token .body { background: none; border-color: transparent; box-shadow: none; overflow: visible; }
+.g3 #tokens .token.srcDrag { opacity: 1; } .g3 #tokens .token.srcDrag .np { opacity: .3; }
+.g3 #center { padding-top: 0; gap: 4px; }
+.g3 #capTag { left: 8px; bottom: 6px; }
+.g3 #oppTag { left: 8px; top: 8px; }
