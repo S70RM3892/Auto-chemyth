@@ -10,6 +10,9 @@ import { applyIntent } from './intents.js';
 import { Session, savedName, saveName } from './net/session.js';
 import { normCode, cleanName, NAME_MAX } from './net/proto.js';
 import { sfx, musicMode, snd, setSound } from './audio.js';
+import { REACTIONS, RX, RX_KIND, activeReactions, completes, possibleReactions } from './reactions.js';
+import { pickQuestion, choices, allQuestions } from './quiz.js';
+import * as meta from './meta.js';
 
 const $ = s => document.querySelector(s);
 const el = (tag, cls, html) => { const e = document.createElement(tag); if (cls) e.className = cls; if (html != null) e.innerHTML = html; return e; };
@@ -31,15 +34,20 @@ async function initStage() {
     if (!st.ok) return;
     cellWorld = gfx.cellWorld; stage = st; window.__stage = st; document.querySelector('#app').classList.add('g3');
     if (G) { layout(); render(); } else if (!net && !document.querySelector('#modal').hidden && document.querySelector('#mSolo')) showStart();
-    // 肖像は数体ずつ作り、できた順に画面へ差し込む
-    const queue = Object.keys(UNITS);
-    const pump = () => {
-      const t0 = performance.now();
-      while (queue.length && performance.now() - t0 < 14) { const id = queue.shift(); PIC[id] = stage.portrait(id); document.querySelectorAll(`img[data-pic="${id}"]`).forEach(im => { im.src = PIC[id]; }); }
-      if (queue.length) setTimeout(pump, 24);
-    };
-    pump();
+    stage.setTheme(meta.boardSkin()); stage.setMol(meta.P.eq.m);
+    pumpPics();
   } catch (e) { console.warn('[gfx] 3D表示を使えないため平面表示に切り替えます', e); stage = null; }
+}
+// 肖像は数体ずつ作り、できた順に画面へ差し込む（表示様式を変えたら作り直す）
+let picGen = 0;
+function pumpPics() {
+  const gen = ++picGen, queue = Object.keys(UNITS);
+  const pump = () => {
+    if (gen !== picGen || !stage) return; const t0 = performance.now();
+    while (queue.length && performance.now() - t0 < 14) { const id = queue.shift(); PIC[id] = stage.portrait(id); document.querySelectorAll(`img[data-pic="${id}"]`).forEach(im => { im.src = PIC[id]; }); }
+    if (queue.length) setTimeout(pump, 24);
+  };
+  pump();
 }
 const hexInt = c => parseInt(String(c).replace('#', ''), 16) || 0xffffff;
 /** 物質の絵：3Dモデルの肖像（なければ従来のSVG） */
@@ -137,7 +145,7 @@ function fitPlates(root) {
 
 // ---------- 描画 ----------
 const isNew = u => { const n = !seen.has(u.uid); seen.add(u.uid); return n && seenOn; };
-function render() { renderTop(); renderTraits(); renderBoard(); renderBench(); renderItems(); renderShop(); renderScore(); }
+function render() { renderTop(); renderTraits(); renderBoard(); renderBench(); renderItems(); renderShop(); renderScore(); if (me) { for (const u of G.allUnits(me)) meta.seeUnit(u.id, u.star); flushNews(); } }
 
 function renderTop() {
   $('#stageLbl').textContent = G.label;
@@ -169,7 +177,22 @@ function renderTraits() {
     d.onclick = e => { e.stopPropagation(); showTraitInfo(k, t); };
     box.appendChild(d);
   }
+  for (const r of activeReactions(me.board.map(u => u.id))) { // 盤面で成立している反応
+    const K = RX_KIND[r.k], d = el('div', 'trait act rx'); d.style.setProperty('--tc', K.col);
+    d.innerHTML = `<div class="ic">⚗</div><div><div class="nm">${r.n}</div><div class="bp">${K.n}</div></div>`;
+    d.onclick = e => { e.stopPropagation(); showRxInfo(r.id); }; box.appendChild(d);
+  }
 }
+function rxHtml(r, known = true) {
+  const K = RX_KIND[r.k];
+  return `<div class="rxc${known ? '' : ' unk'}" style="--tc:${K.col}"><div class="rh"><b>${known ? r.n : '？？？'}</b><span class="chip" style="--tc:${K.col}">${K.n}</span></div>
+    <div class="eq">${known ? r.eq : '未発見（下の物質を同時に盤面へ置くと発動）'}</div>
+    <div class="minis">${r.need.map(id => `<span class="mini c${UNITS[id].cost}" title="${UNITS[id].n}">${pic(id, 'fig', TOK_VB)}<b>${SHORT[id] || UNITS[id].f}</b></span>`).join('<i>＋</i>')}</div>
+    ${known ? `<div class="note">📝 ${r.note}</div>` : ''}</div>`;
+}
+function showRxInfo(id) { const r = RX[id]; showInfo(`<h3>⚗️ 反応</h3>${rxHtml(r)}<div class="mut" style="margin-top:6px">効果：${RX_KIND[r.k].d}</div>`); }
+// 研究記録からのお知らせ（新発見・実績）をトーストで出す
+function flushNews() { for (const n of meta.takeNews()) toast(n); }
 
 function renderBoard(force) {
   if (G.phase !== 'plan' && !force) return;
@@ -206,7 +229,7 @@ function renderShop() {
     if (!id) { box.appendChild(el('div', 'card empty')); return; }
     const d = UNITS[id], own = G.allUnits(me).filter(u => u.id === id), n1 = own.filter(u => u.star === 1).length;
     const c = el('div', `card c${d.cost}` + (own.length ? ' own' : '') + (n1 % 3 === 2 ? ' own3' : '') + (G.canBuy(me, i) ? '' : ' no'));
-    c.innerHTML = cardHtml(id, cnt) + '<div class="i">i</div>';
+    c.innerHTML = cardHtml(id, cnt, me.board.map(u => u.id)) + '<div class="i">i</div>';
     c.onclick = e => {
       e.stopPropagation();
       if (e.target.classList.contains('i')) return showUnitInfo(id, 1, []);
@@ -238,9 +261,9 @@ function renderScore() {
 }
 
 // 標本カード（ショップ・図鑑共通）
-function cardHtml(id, cnt = {}) {
-  const d = UNITS[id], f = SHORT[id] || d.f, n = [...f].length;
-  return `<div class="art" style="--au:${auraOf(id)}">${pic(id, 'fig', CARD_VB)}</div><div class="cost">${d.cost}</div>` +
+function cardHtml(id, cnt = {}, board) {
+  const d = UNITS[id], f = SHORT[id] || d.f, n = [...f].length, rx = board ? completes(board, id) : [];
+  return `<div class="art" style="--au:${auraOf(id)}">${pic(id, 'fig', CARD_VB)}</div><div class="cost">${d.cost}</div>${rx.length ? `<div class="rxb" title="買って置くと反応：${rx.map(r => r.n).join('、')}">⚗${rx.length > 1 ? rx.length : ''}</div>` : ''}` +
     `<div class="meta"><span class="fm${n > 5 ? ' long' : ''}">${f}</span><span class="nm">${d.n}</span></div>` +
     `<div class="trs">${d.traits.map(t => `<span class="${cnt[t] ? 'act' : ''}" style="--tc:${TRAITS[t].col}" title="${TRAITS[t].n}">${TRAIT_ICON[t]}<em>${TRAITS[t].n}</em></span>`).join('')}</div>`;
 }
@@ -261,6 +284,7 @@ function showUnitInfo(id, star, items, live) {
     <h3>${d.n}</h3><div class="fmrow"><span class="fm">${d.f}</span><span class="costc">${d.mob ? '実験試料' : d.cost + 'G ' + '★'.repeat(star)}</span></div>
     <div class="chips">${d.traits.map(chip).join('')}</div></div></div>
     ${LORE[id] ? `<div class="lore">${LORE[id]}</div>` : ''}
+    ${(() => { const rs = REACTIONS.filter(r => r.need.includes(id)); return rs.length ? `<div class="rxl"><span class="mut">反応</span>${rs.map(r => `<span class="chip${meta.P.rx[r.id] ? '' : ' unk'}" style="--tc:${RX_KIND[r.k].col}" title="${r.need.map(x => UNITS[x].n).join(' ＋ ')}">${meta.P.rx[r.id] ? r.n : '？ ' + r.need.filter(x => x !== id).map(x => SHORT[x] || UNITS[x].f).join('＋')}</span>`).join('')}</div>` : ''; })()}
     <div class="stats"><span>HP <b>${st[0]}</b></span><span>攻撃力 <b>${st[1]}</b></span><span>攻速 <b>${st[2]}</b></span><span>アーマー <b>${st[3]}</b></span><span>魔法耐性 <b>${st[4]}</b></span><span>射程 <b>${st[5]}</b></span><span>スキル威力 <b>${st[6]}</b></span></div>
     ${skillHtml(d, star)}
     ${(items || []).map(i => `<div class="itl">${ITEMS[i].ic} <b>${ITEMS[i].n}</b>：${ITEMS[i].d}</div>`).join('')}
@@ -302,7 +326,7 @@ function showScout(p) {
 }
 
 function showDex(tab = 'how') {
-  const tabs = { how: '遊び方', units: '物質', traits: 'シナジー', items: '器具', odds: '確率' };
+  const tabs = { how: '遊び方', units: '物質', rx: '反応', traits: 'シナジー', items: '器具', odds: '確率' };
   let body = '';
   if (tab === 'how') body = `
     <p><b>Auto-Chemyth</b> は、元素や化合物の<b>構造体</b>を集めて六角の反応場「元素盤」に投影し、7人のライバル化学者と自動で戦わせる化学オートバトラーです。</p>
@@ -318,7 +342,9 @@ function showDex(tab = 'how') {
     <h4>経済</h4>
     <p>毎ラウンド5G＋利息（10Gごとに+1、最大5）＋連勝/連敗ボーナス。経験値は4Gで4XP、リロードは2G。ユニットをショップ欄へドラッグで売却。</p>
     <h4>操作</h4><p>ドラッグ：移動・装備・売却　／　タップ：詳細　／　キー：<b>D</b> リロード・<b>F</b> 経験値・<b>Space</b> 反応開始</p>`;
-  if (tab === 'units') body = [1, 2, 3, 4, 5].map(c => `<h4>コスト${c}</h4><div class="dex">${BY_COST[c - 1].map(id => `<div class="card c${c}" data-id="${id}">${cardHtml(id)}</div>`).join('')}</div>`).join('');
+  const inSet = G && G.set && G.set.length ? new Set(G.set) : null;
+  if (tab === 'rx') { const kn = REACTIONS.filter(r => meta.P.rx[r.id]).length; body = `<p>特定の物質を<b>同時に盤面へ置く</b>と反応が発動し、反応物が強くなる（1体につき3つまで）。発見 <b class="on">${kn}</b> / ${REACTIONS.length}${inSet ? `　｜　今回の出題範囲で起こせる反応 ${possibleReactions(G.set).length}種` : ''}</p>` + Object.keys(RX_KIND).map(k => `<h4 style="color:${RX_KIND[k].col}">${RX_KIND[k].n} <small class="mut">${RX_KIND[k].d}</small></h4><div class="rxs">${REACTIONS.filter(r => r.k === k).map(r => rxHtml(r, !!meta.P.rx[r.id])).join('')}</div>`).join(''); }
+  if (tab === 'units') body = (inSet ? `<p>明るいカードが<b>今回の出題範囲</b>（${G.set.length}種）。全${Object.keys(UNITS).filter(k => !UNITS[k].mob).length}種から毎ゲーム抽選される。</p>` : '') + [1, 2, 3, 4, 5].map(c => `<h4>コスト${c}</h4><div class="dex">${BY_COST[c - 1].map(id => `<div class="card c${c}${inSet && !inSet.has(id) ? ' out' : ''}${meta.P.units[id] ? '' : ' undisc'}" data-id="${id}">${cardHtml(id)}</div>`).join('')}</div>`).join('');
   if (tab === 'traits') body = Object.values(TRAITS).map(T => `<div class="dexT" style="--tc:${T.col}"><b style="color:${T.col}"><span class="dic">${TRAIT_ICON[T.id]}</span>${T.n}</b>（${T.bp.join('/')}）<br>${fmt(T.d, T.v)}<div class="why">📝 ${T.why}</div></div>`).join('') +
     `<div class="dexT" style="--tc:#fff36b"><b style="color:#fff36b">中和</b><br>H⁺ と OH⁻ が同じユニットに重なると両方が消え、${NEUTRAL.flat}＋最大HPの${NEUTRAL.pct}%の魔法ダメージ。<div class="why">📝 H⁺ + OH⁻ → H₂O　ΔH = −56.5 kJ/mol（強酸・強塩基なら種類によらず一定）</div></div>`;
   if (tab === 'items') body = `<h4>素材</h4><div class="recipe">${COMPS.map(c => `<div>${ITEMS[c].ic} <b>${ITEMS[c].n}</b><br>${ITEMS[c].d}</div>`).join('')}</div><h4>完成品（素材2つを同じユニットに装備）</h4><div class="recipe">${FULL_ITEMS.map(k => { const it = ITEMS[k]; return `<div>${it.r.map(c => ITEMS[c].ic).join('＋')} → ${it.ic} <b>${it.n}</b><br>${it.d}</div>`; }).join('')}</div>`;
@@ -346,12 +372,17 @@ function showStart() {
     </div>
     <div class="opts"><div class="row"><span class="ol">難易度</span><span class="seg" id="segDiff">${Object.keys(DIFFS).map(k => `<button data-v="${k}" class="${k === opts.diff ? 'on' : ''}">${DIFFS[k].n}</button>`).join('')}</span></div>
     <div class="row"><span class="ol">準備時間</span><span class="seg" id="segTimer"><button data-v="1" class="${opts.timer ? 'on' : ''}">制限あり</button><button data-v="0" class="${opts.timer ? '' : 'on'}">じっくり（無制限）</button></span></div></div>
-    <div class="row go"><button id="mHow">遊び方・図鑑</button></div>
+    <div class="row"><span class="ol">口頭試問</span><span class="seg" id="segQuiz"><button data-v="1" class="${meta.P.opt.quiz ? 'on' : ''}">実験ラウンドで出題</button><button data-v="0" class="${meta.P.opt.quiz ? '' : 'on'}">出題しない</button></span></div>
+    <div class="row go"><button id="mHow">遊び方・図鑑</button><button id="mRec">研究記録・スキン</button><button id="mQuiz">口頭試問</button></div>
+    <div class="rankline">${meta.rank().name}　研究ポイント <b>${meta.P.rp}</b>　物質 ${Object.keys(meta.P.units).length}/${BY_COST.flat().length}　反応 ${Object.keys(meta.P.rx).length}/${REACTIONS.length}</div>
     <div class="foot">41種の構造体 ・ 14の族と性質 ・ 最大8人で対戦</div></div>`, 'titleBox');
   seg('#segDiff', v => { opts.diff = v; }); seg('#segTimer', v => { opts.timer = v === '1'; });
   $('#mSolo').onclick = () => { closeModal(); newGame(); };
   $('#mOnline').onclick = () => showOnline();
   $('#mHow').onclick = () => { showDex('how'); const c = $('#mClose'); c.onclick = () => { hideInfo(); showStart(); }; };
+  seg('#segQuiz', v => meta.setOpt('quiz', v === '1'));
+  $('#mRec').onclick = () => showRecord('prog');
+  $('#mQuiz').onclick = () => showQuiz({ practice: true, onDone: showStart });
 }
 function seg(id, fn) { $(id).querySelectorAll('button').forEach(b => b.onclick = () => { $(id).querySelectorAll('button').forEach(x => x.classList.remove('on')); b.classList.add('on'); fn(b.dataset.v); }); }
 
@@ -363,11 +394,63 @@ function showAug() {
     augOpen = false; closeModal(); render(); if (!online()) startTimer();
   });
 }
+// 戦闘開始時：成立している反応を記録して知らせる
+function announceRx() {
+  const rs = activeReactions(me.board.map(u => u.id)); if (!rs.length) return;
+  let nw = 0; for (const r of rs) if (meta.seeRx(r.id, r.n)) nw++;
+  toast(`⚗️ ${rs.slice(0, 2).map(r => r.eq).join('　／　')}${rs.length > 2 ? `　ほか${rs.length - 2}反応` : ''}`);
+  flushNews(); if (nw) sfx('craft');
+}
+// 口頭試問。practice=true はタイトルからの自主練（連続出題）
+let quizOpen = false;
+function showQuiz(o = {}) {
+  const q = pickQuestion(meta.P.quiz, o.seen || []), ch = choices(q); quizOpen = true;
+  modal(`<div class="quiz"><div class="qh"><span class="chip">${q.t}</span><span class="mut">${o.practice ? '口頭試問（自主練）' : '口頭試問：正解で研究ポイント +10'}</span><span class="qrp">RP ${meta.P.rp}</span></div>
+    <h3>${q.q}</h3><div class="qcs">${ch.map((c, i) => `<button class="qc" data-i="${i}">${c}</button>`).join('')}</div><div class="qex" hidden></div>
+    <div class="row go"><button id="qSkip">${o.practice ? 'やめる' : 'スキップ'}</button><button class="primary" id="qNext" hidden>${o.practice ? '次の問題' : '盤面へ'}</button></div></div>`, 'quizBox');
+  const done = () => { quizOpen = false; closeModal(); if (o.onDone) o.onDone(); };
+  $('#modalBox').querySelectorAll('.qc').forEach(b => b.onclick = () => {
+    if ($('#modalBox .qc.ok')) return;
+    const right = ch[+b.dataset.i] === q.a; meta.answer(q.id, right, o.practice); sfx(right ? 'buy' : 'error');
+    $('#modalBox').querySelectorAll('.qc').forEach(x => { x.disabled = true; if (ch[+x.dataset.i] === q.a) x.classList.add('ok'); }); if (!right) b.classList.add('ng');
+    const ex = $('#modalBox .qex'); ex.hidden = false; ex.innerHTML = `<b>${right ? '正解' : '不正解'}</b>　${q.ex || ''}`;
+    $('#qNext').hidden = false; $('#qSkip').hidden = !o.practice; $('#modalBox .qrp').textContent = 'RP ' + meta.P.rp; flushNews();
+  });
+  $('#qSkip').onclick = done;
+  $('#qNext').onclick = () => { if (o.practice) showQuiz(Object.assign({}, o, { seen: (o.seen || []).concat(q.id).slice(-30) })); else done(); };
+}
+function closeQuiz() { if (quizOpen) { quizOpen = false; closeModal(); } }
+// 研究記録：進捗・スキン・実績
+function applySkins() {
+  if (!stage) return; stage.setTheme(meta.boardSkin());
+  if (stage.setMol(meta.P.eq.m)) { PIC = {}; document.querySelectorAll('img[data-pic]').forEach(im => { im.src = BLANK; }); pumpPics(); }
+  if (G) render();
+}
+function showRecord(tab = 'prog') {
+  const P = meta.P, rk = meta.rank(), nU = BY_COST.flat().length, qs = allQuestions(), qst = meta.quizStats();
+  const bar = (a, b) => `<div class="pbar"><i style="width:${Math.min(100, a / b * 100)}%"></i><span>${a} / ${b}</span></div>`;
+  let body = '';
+  if (tab === 'prog') body = `<div class="rk"><b>${rk.name}</b><span class="mut">${rk.next ? `次の階級「${rk.next[1]}」まで あと ${rk.next[0] - P.total} RP` : '最高階級'}</span></div>
+    <h4>物質の発見</h4>${bar(Object.keys(P.units).length, nU)}<h4>反応の発見</h4>${bar(Object.keys(P.rx).length, REACTIONS.length)}
+    <h4>口頭試問（出題済み / 全問）</h4>${bar(qst.seen, qs.length)}<p class="mut">正解数 ${P.st.right}　／　苦手（誤答が多い）${qst.weak}問 … 苦手な問題ほど優先して出題される</p>
+    <h4>戦績</h4><p>プレイ ${P.st.games}回　優勝 ${P.st.wins}回　4位以内 ${P.st.top4}回　最高 ${P.st.best < 9 ? P.st.best + '位' : '—'}</p>`;
+  const skin = (kind, list) => list.map(x => { const own = meta.owned(kind, x.id), eq = P.eq[kind] === x.id;
+    return `<div class="skin${eq ? ' eq' : ''}"><div class="sw">${kind === 'b' ? `<i style="background:#${x.ally.toString(16).padStart(6, '0')}"></i><i style="background:#${x.enemy.toString(16).padStart(6, '0')}"></i><i style="background:#${x.bg.toString(16).padStart(6, '0')}"></i>` : x.id === 'stick' ? '●━●' : x.id === 'fill' ? '⬤⬤' : '◌┄◌'}</div>
+      <div><b>${x.n}</b><div class="mut">${x.d}</div></div><button data-k="${kind}" data-id="${x.id}" data-c="${x.cost}" ${eq || (!own && P.rp < x.cost) ? 'disabled' : ''}>${eq ? '使用中' : own ? '使う' : x.cost + ' RP'}</button></div>`; }).join('');
+  if (tab === 'skin') body = `<p>研究ポイント <b class="on">${P.rp}</b>　物質や反応の発見、口頭試問の正解、対戦の順位で貯まる。</p><h4>反応台</h4><div class="skins">${skin('b', meta.BOARDS)}</div><h4>分子の表示様式</h4><div class="skins">${skin('m', meta.MOLS)}</div>${stage ? '' : '<p class="mut">この端末は3D表示が使えないため、スキンは反映されません。</p>'}`;
+  if (tab === 'ach') body = `<div class="achs">${meta.ACHS.map(a => `<div class="ach${P.ach[a.id] ? ' got' : ''}"><b>${P.ach[a.id] ? '🏅' : '・'} ${a.n}</b><span class="mut">${a.d}</span><span class="rp">+${a.rp} RP</span></div>`).join('')}</div>`;
+  const tabs = { prog: '進捗', skin: 'スキン', ach: '実績' };
+  modal(`<div class="tabs">${Object.keys(tabs).map(k => `<button data-tab="${k}" class="${k === tab ? 'on' : ''}">${tabs[k]}</button>`).join('')}<button id="mClose" style="margin-left:auto">閉じる</button></div>${body}`);
+  $('#modalBox').querySelectorAll('[data-tab]').forEach(b => b.onclick = () => showRecord(b.dataset.tab));
+  $('#modalBox').querySelectorAll('.skin button').forEach(b => b.onclick = () => { const k = b.dataset.k, id = b.dataset.id; if (!meta.owned(k, id) && !meta.buy(k, id, +b.dataset.c)) return; meta.equip(k, id); sfx('craft'); applySkins(); showRecord('skin'); });
+  $('#mClose').onclick = () => { closeModal(); if (!G) showStart(); };
+}
 function closeAug() { if (augOpen) { augOpen = false; closeModal(); } }
 
 function showOver() {
   const p = G.place, win = p === 1;
   musicMode('title'); if (win) sfx('champion');
+  if (!G.recorded) { G.recorded = 1; meta.endGame(p); flushNews(); }
   const best = me.board.slice().sort((a, b) => UNITS[b.id].cost * b.star - UNITS[a.id].cost * a.star).slice(0, 5);
   const ranks = online() ? `<div class="ranks">${G.players.slice().sort((a, b) => (a.place || 9) - (b.place || 9)).map(q => `<div class="rk${q === me ? ' me' : ''}${q.human ? ' hu' : ''}"><b>${q.place || '-'}</b><span>${esc(q.name)}</span>${q.human ? `<em>${q.away ? '離席' : 'プレイヤー'}</em>` : '<em>AI</em>'}</div>`).join('')}</div>` : '';
   modal(`<div class="over ${win ? 'win' : ''}"><div class="place">${win ? '🏆' : p + '<small>位</small>'}</div>
@@ -392,7 +475,7 @@ function enterPlan() {
   render(); musicMode('plan'); sfx('round');
   const pve = G.isPvE(), o = G.opponent;
   stageFx(`ROUND ${G.label}`, pve ? '実験ラウンド ― 不純物を取り除け' : o ? `次の対戦：${esc(o.name)}${!o.human && titleOf(o.name) ? `「${titleOf(o.name)}」` : ''}` : '');
-  if (G.pendingAug) showAug(); else startTimer();
+  if (G.pendingAug) showAug(); else if (pve && me.alive && meta.P.opt.quiz) showQuiz({ onDone: startTimer }); else startTimer();
 }
 function startTimer() {
   clearInterval(timerId); const bar = $('#timerBar i');
@@ -414,7 +497,7 @@ function go() {
   clearInterval(timerId); cancelDrag(); hideInfo();
   const f = G.myFight(), ghost = f && f.ghost;
   G.startCombat(); bt = G.battle; bt.oppName = G.opponent ? G.opponent.name + (ghost ? '（影）' : '') : '実験：不純物';
-  render(); buildBattleTokens(); stageFx('反応開始', esc(bt.oppName), 'go'); musicMode('combat'); sfx('fight');
+  render(); buildBattleTokens(); stageFx('反応開始', esc(bt.oppName), 'go'); musicMode('combat'); sfx('fight'); announceRx();
   playBattle(() => setTimeout(endCombat, 900));
 }
 // 戦闘の再生（ソロ・オンライン共通）。オンラインは常に ×1
@@ -575,12 +658,12 @@ function enterPlanOnline() {
   const pve = G.isPvE(), o = G.opponent;
   if (me.alive) stageFx(`ROUND ${G.label}`, pve ? '実験ラウンド ― 不純物を取り除け' : o ? `次の対戦：${esc(o.name)}${!o.human && titleOf(o.name) ? `「${titleOf(o.name)}」` : ''}` : '');
   else stageFx(`ROUND ${G.label}`, '観戦中');
-  if (me.alive && me.pendingAug && !augOpen) showAug();
+  if (me.alive && me.pendingAug && !augOpen) showAug(); else if (pve && me.alive && meta.P.opt.quiz) showQuiz({});
   startTimer();
 }
 function onCombat(m) {
   if (keys.combat === m.label) return; keys.combat = m.label;
-  clearInterval(timerId); closeAug(); cancelDrag(); hideInfo();
+  clearInterval(timerId); closeAug(); closeQuiz(); cancelDrag(); hideInfo();
   const seat = net.seat, f = m.fights.find(x => x.a === seat || (x.b === seat && !x.ghost));
   musicMode('combat'); sfx('fight');
   if (!f) { render(); stageFx('反応開始', '観戦中', 'go'); return; }
@@ -590,7 +673,7 @@ function onCombat(m) {
   bt.oppName = opp ? opp.name + (f.ghost ? '（影）' : '') : '実験：不純物';
   replay = { label: m.label, f, myTeam: flip ? 1 : 0, checked: false };
   net.view = { label: m.label, flip, myTeam: replay.myTeam };
-  render(); buildBattleTokens(); stageFx('反応開始', esc(bt.oppName), 'go');
+  render(); buildBattleTokens(); stageFx('反応開始', esc(bt.oppName), 'go'); announceRx();
   playBattle(checkReplay);
 }
 // 手元で再生した戦闘がホストの確定結果と一致するか確認する

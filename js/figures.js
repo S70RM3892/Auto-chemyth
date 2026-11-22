@@ -382,4 +382,8 @@ export const TRAIT_ICON = {
   precip: I('<path d="M5 3v15a3 3 0 0 0 3 3h8a3 3 0 0 0 3-3V3"/><path d="M5.5 15h13v3.2a2.5 2.5 0 0 1-2.5 2.5H8a2.5 2.5 0 0 1-2.5-2.5z" fill="currentColor"/><path d="M12 5v6M9.6 8.8 12 11.2l2.4-2.4"/>'),
   gas: I('<path d="M7 21c-2-3 2-5 0-8s2-5 0-8M12 20c-2-3 2-5 0-8s2-5 0-8M17 21c-2-3 2-5 0-8s2-5 0-8"/>'),
   coval: I('<path d="M3.5 9 7.5 3.5h9L20.5 9 12 21z" fill="currentColor" fill-opacity=".3"/><path d="M3.5 9h17M9 9l3 12 3-12M7.5 3.5 9 9l3-5.5L15 9l1.5-5.5"/>'),
+  alkEarth: I('<circle cx="8" cy="14" r="4.6"/><circle cx="16.5" cy="8.5" r="3.2" fill="currentColor" stroke="none"/><path d="M4 21h16" stroke-width="2"/>'),
+  aromatic: I('<path d="M12 2.8 20 7.4v9.2L12 21.2 4 16.6V7.4z"/><circle cx="12" cy="12" r="4.2"/>'),
+  polymer: I('<circle cx="5" cy="12" r="2.6"/><circle cx="12" cy="12" r="2.6" fill="currentColor" stroke="none"/><circle cx="19" cy="12" r="2.6"/><path d="M7.6 12h1.8M14.6 12h1.8M1 12h1.4M21.6 12H23"/>'),
+  ionic: I('<circle cx="7" cy="7" r="3.2" fill="currentColor" stroke="none"/><circle cx="17" cy="7" r="3.2"/><circle cx="7" cy="17" r="3.2"/><circle cx="17" cy="17" r="3.2" fill="currentColor" stroke="none"/><path d="M10.2 7h3.6M10.2 17h3.6M7 10.2v3.6M17 10.2v3.6" stroke-width="1.2"/>'),
 };

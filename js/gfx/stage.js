@@ -9,13 +9,13 @@ import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
-import { buildModel } from './mol.js';
+import { buildModel, setMolStyle } from './mol.js';
 
 const S3 = Math.sqrt(3) / 2, COLS = 7, ROWS = 8;
 /** 盤面座標（列, 行）→ ワールド座標 [x, z]。六角の幅を1とする */
 export const cellWorld = (c, r) => [c + (r & 1 ? .5 : 0) - 3.25, (r - 3.5) * S3];
 const COST = [0x8a7466, 0xa9b4c6, 0x3fe07f, 0x4a9bff, 0xc070ff, 0xffc23d];
-const ALLY = 0x39d9ff, ENEMY = 0xff3d6e, MODEL_Y = .92;
+let ALLY = 0x39d9ff, ENEMY = 0xff3d6e; const MODEL_Y = .92;
 const V = new THREE.Vector3();
 
 function canvasTex(w, h, draw) { const c = document.createElement('canvas'); c.width = w; c.height = h; draw(c.getContext('2d'), w, h); const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; return t; }
@@ -50,14 +50,15 @@ export class Stage {
     const s = this.scene;
     s.add(new THREE.HemisphereLight(0x8fb8ff, 0x0a0d14, .55));
     const key = new THREE.DirectionalLight(0xffffff, 1.15); key.position.set(-3, 9, 6); s.add(key);
-    const a = new THREE.PointLight(ALLY, 26, 14, 1.8); a.position.set(0, 3.2, 4.2); s.add(a);
-    const e = new THREE.PointLight(ENEMY, 22, 14, 1.8); e.position.set(0, 3.2, -4.4); s.add(e);
+    const a = this.lA = new THREE.PointLight(ALLY, 26, 14, 1.8); a.position.set(0, 3.2, 4.2); s.add(a);
+    const e = this.lE = new THREE.PointLight(ENEMY, 22, 14, 1.8); e.position.set(0, 3.2, -4.4); s.add(e);
+    this.ringM = [];
     // 床：発光グリッド
     const grid = canvasTex(256, 256, (g, w) => { g.fillStyle = '#04070c'; g.fillRect(0, 0, w, w); g.strokeStyle = '#19486a'; g.lineWidth = 2; g.strokeRect(0, 0, w, w); g.strokeStyle = '#0d2437'; g.lineWidth = 1; g.strokeRect(w / 2, 0, w, w); g.strokeRect(0, w / 2, w, w); });
     grid.wrapS = grid.wrapT = THREE.RepeatWrapping; grid.repeat.set(40, 40); grid.anisotropy = 4;
     const floor = new THREE.Mesh(new THREE.PlaneGeometry(120, 120), new THREE.MeshBasicMaterial({ map: grid })); floor.rotation.x = -Math.PI / 2; floor.position.y = -1.6; s.add(floor);
     // 床の誘導灯リング（反応台を囲む）
-    for (const [R, col, op] of [[6.6, 0x39d9ff, .55], [8.4, 0x1c7fa6, .35], [11, 0x123a52, .5]]) { const rg = new THREE.Mesh(new THREE.RingGeometry(R, R + .06, 96).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color: col, transparent: true, opacity: op, toneMapped: false })); rg.position.y = -1.58; s.add(rg); }
+    for (const [R, col, op] of [[6.6, 0x39d9ff, .55], [8.4, 0x1c7fa6, .35], [11, 0x123a52, .5]]) { const rg = new THREE.Mesh(new THREE.RingGeometry(R, R + .06, 96).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color: col, transparent: true, opacity: op, toneMapped: false })); rg.position.y = -1.58; s.add(rg); if (R < 8) this.ringM.push(rg.material); }
     for (let i = 0; i < 24; i++) { const a = i / 24 * Math.PI * 2, tk = new THREE.Mesh(new THREE.BoxGeometry(.05, .01, .5), new THREE.MeshBasicMaterial({ color: 0x39d9ff, transparent: true, opacity: .5, toneMapped: false })); tk.position.set(Math.cos(a) * 7.5, -1.58, Math.sin(a) * 7.5); tk.rotation.y = -a + Math.PI / 2; s.add(tk); }
     // 奥の壁のホロディスプレイ（周期表・波形・構造式）
     const wall = canvasTex(1024, 512, (g, w, h) => {
@@ -97,7 +98,7 @@ export class Stage {
     const leg = new THREE.Mesh(new THREE.CylinderGeometry(1.6, 2.4, 1.2, 6), metal); leg.position.y = -1.1; s.add(leg);
     // 台の縁の発光ライン
     const edge = (w, d, col, y) => { const m = new THREE.Mesh(new THREE.BoxGeometry(w, .03, d), new THREE.MeshBasicMaterial({ color: col, toneMapped: false })); m.position.y = y; return m; };
-    const e1 = edge(8.9, .04, ALLY, -.05); e1.position.z = 4.1; const e2 = edge(8.9, .04, ENEMY, -.05); e2.position.z = -4.1; s.add(e1, e2);
+    const e1 = edge(8.9, .04, ALLY, -.05); e1.position.z = 4.1; const e2 = edge(8.9, .04, ENEMY, -.05); e2.position.z = -4.1; s.add(e1, e2); this.eA = e1.material; this.eE = e2.material;
     const seam = edge(8.2, .05, 0xffd58a, -.045); s.add(seam);
     // 六角タイル（ガラス）と発光する縁
     const tileG = new THREE.CylinderGeometry(.552, .552, .1, 6), n = COLS * ROWS, m4 = new THREE.Matrix4(), col = new THREE.Color();
@@ -113,6 +114,21 @@ export class Stage {
     this.hl = new THREE.Mesh(new THREE.CircleGeometry(.5, 6).rotateX(-Math.PI / 2).rotateY(Math.PI / 6), new THREE.MeshBasicMaterial({ color: 0x6ff7d2, transparent: true, opacity: .5, toneMapped: false, depthWrite: false }));
     this.hl.position.y = .012; this.hl.visible = false; s.add(this.hl);
   }
+  /** 反応台スキンを適用する */
+  setTheme(th) {
+    if (!this.ok) return;
+    ALLY = th.ally; ENEMY = th.enemy;
+    this.lA.color.setHex(ALLY); this.lE.color.setHex(ENEMY); this.eA.color.setHex(ALLY); this.eE.color.setHex(ENEMY);
+    this.scene.background.setHex(th.bg); this.scene.fog.color.setHex(th.bg); for (const m of this.ringM) m.color.setHex(th.ring);
+    const col = new THREE.Color(), dim = (hex, k) => col.setHex(hex).multiplyScalar(k);
+    for (let r = 0; r < ROWS; r++) for (let c = 0; c < COLS; c++) { const i = r * COLS + c, me = r >= 4; this.tiles.setColorAt(i, col.setHex(me ? th.tA : th.tE)); this.rims.setColorAt(i, dim(me ? ALLY : ENEMY, .55)); }
+    this.tiles.instanceColor.needsUpdate = true; this.rims.instanceColor.needsUpdate = true;
+    this.rebuild();
+  }
+  /** 分子の表示様式を変える。変わったら true（肖像の作り直しが必要） */
+  setMol(style) { if (!this.ok) return false; const ch = setMolStyle(style); if (ch) this.rebuild(); return ch; }
+  /** 駒を作り直す（次の setUnits で再生成される） */
+  rebuild() { for (const u of this.units.values()) this.scene.remove(u.g); this.units.clear(); }
   /** ドラッグ中に指しているマスを光らせる（c が null で消す） */
   hover(c, r) { if (!this.ok) return; if (c == null) { this.hl.visible = false; return; } const [x, z] = cellWorld(c, r); this.hl.position.set(x, .012, z); this.hl.visible = true; }
 

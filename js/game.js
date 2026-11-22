@@ -3,6 +3,7 @@
 // ============================================================
 import { UNITS, BY_COST, TRAITS, ITEMS, COMPS, FULL_ITEMS, AUGS, BOT_NAMES, combine, countTraits, traitTier } from './data.js';
 import { Battle, COLS } from './combat.js';
+import { REACTIONS, completes } from './reactions.js';
 
 export const BENCH = 9, MAX_LEVEL = 9;
 export const XP_NEED = [0, 2, 4, 6, 10, 20, 36, 56, 84]; // XP_NEED[L] : L→L+1
@@ -27,7 +28,10 @@ export class Game {
   constructor(opts = {}) {
     this.opts = Object.assign({ diff: 'normal', timer: true, online: false, seats: null }, opts);
     this.pool = {};
-    for (let c = 1; c <= 5; c++) for (const id of BY_COST[c - 1]) this.pool[id] = POOL_N[c];
+    // 今回の出題範囲：全物質から毎ゲーム抽選する（ショップで同じ物質を集めやすく保つ）
+    this.set = this.opts.set || Game.pickSet();
+    this.byCost = [1, 2, 3, 4, 5].map(c => this.set.filter(id => UNITS[id].cost === c));
+    for (const id of this.set) this.pool[id] = POOL_N[UNITS[id].cost];
     const names = shuffle(BOT_NAMES.slice());
     this.players = [];
     const seats = this.opts.seats || [{ name: 'あなた' }];
@@ -37,6 +41,21 @@ export class Game {
     this.log = []; this.over = false; this.place = 0;
     for (const p of this.players) { this.addUnit(p, this.draw(1)); p.gold = 3; }
     this.nextRound();
+  }
+
+  /** 出題範囲の抽選。反応が起こせる組を優先して入れ、どのシナジーも最低段階は組めるようにする */
+  static pickSet(quota = [11, 10, 9, 7, 5]) {
+    for (let attempt = 0; attempt < 60; attempt++) {
+      const left = quota.slice(), set = new Set();
+      const add = id => { const c = UNITS[id].cost - 1; if (set.has(id) || left[c] <= 0) return false; set.add(id); left[c]--; return true; };
+      for (const r of shuffle(REACTIONS.slice())) { // 反応の組を丸ごと入れられるなら入れる
+        const need = r.need.filter(x => !set.has(x)), cnt = [0, 0, 0, 0, 0]; for (const x of need) cnt[UNITS[x].cost - 1]++;
+        if (cnt.every((n, i) => n <= left[i]) && Math.random() < .8) need.forEach(add);
+      }
+      for (let c = 0; c < 5; c++) for (const id of shuffle(BY_COST[c].slice())) add(id);
+      const cnt = countTraits([...set].map(id => ({ id })));
+      if (Object.keys(TRAITS).every(t => (cnt[t] || 0) >= TRAITS[t].bp[0]) || attempt === 59) return [...set];
+    }
   }
 
   newPlayer(id, name, bot) {
@@ -117,7 +136,7 @@ export class Game {
 
   // ---------- ショップ ----------
   draw(cost) {
-    const ids = BY_COST[cost - 1].filter(id => this.pool[id] > 0);
+    const ids = this.byCost[cost - 1].filter(id => this.pool[id] > 0);
     if (!ids.length) return null;
     let tot = 0; for (const id of ids) tot += this.pool[id];
     let x = Math.random() * tot;
@@ -368,6 +387,7 @@ export class Game {
     for (const t of d.traits) { if (p.fav.includes(t)) s += 2.2; }
     const cnt = this.traits(p);
     for (const t of d.traits) { const c = cnt[t] || 0; if (!own.length && traitTier(t, c + 1) > traitTier(t, c)) s += 2; }
+    if (!own.length) s += Math.min(3, completes(p.board.map(u => u.id), id).length * 1.5);
     return s;
   }
   botTurn(p) {

@@ -13,7 +13,7 @@ const PKEYS = ['id', 'name', 'bot', 'human', 'away', 'ready', 'hp', 'gold', 'lev
 /** ホスト側：Game → 送信用オブジェクト */
 export function snapshot(G, extra = {}) {
   return Object.assign({
-    stage: G.stage, round: G.round, phase: G.phase, over: G.over, diff: G.opts.diff,
+    stage: G.stage, round: G.round, phase: G.phase, over: G.over, diff: G.opts.diff, set: G.set,
     players: G.players.map(p => {
       const o = {}; for (const k of PKEYS) o[k] = p[k];
       o.board = p.board.map(unitOut); o.bench = p.bench.map(unitOut);
@@ -28,6 +28,7 @@ export function snapshot(G, extra = {}) {
 export function shadowGame(s, seat) {
   const G = Object.create(Game.prototype);
   G.opts = { diff: s.diff, timer: true, online: true, seats: null };
+  G.set = s.set || [];
   G.pool = new Proxy({}, { get: () => 0, set: () => true }); // 共有プールはホストだけが持つ
   G.stage = s.stage; G.round = s.round; G.phase = s.phase; G.over = s.over; G.battle = null; G.log = [];
   G.players = s.players.map(o => {

@@ -3,6 +3,7 @@
 //  盤面: 7列 x 8行 のヘックス(odd-r)。チーム0が下(行4-7)、チーム1が上(行0-3)
 // ============================================================
 import { UNITS, TRAITS, ITEMS, STAR_HP, STAR_AD, NEUTRAL, countTraits, traitTier } from './data.js';
+import { activeReactions, RX_CAP } from './reactions.js';
 
 export const COLS = 7, ROWS = 8, TICK = 0.05, TIME_LIMIT = 40, MOVE_T = 0.35;
 
@@ -43,6 +44,9 @@ export class Battle {
     this.units = []; this.grid = new Array(COLS * ROWS).fill(null);
     this.tl = [teamTiers(A.units), teamTiers(B.units)];
     this.mods = [A.mods || {}, B.mods || {}];
+    // 反応：盤面にそろった物質の組で成立。効果は make() で反応物に与える
+    this.rx = [A, B].map(T => activeReactions(T.units.map(u => u.id)));
+    this.rxMana = this.rx.map(l => Math.min(24, l.filter(r => r.k === 'industry').length * 8));
     const ua = A.units.map(i => this.make(i, 0)), ub = B.units.map(i => this.make(i, 1));
     for (let i = 0; i < Math.max(ua.length, ub.length); i++) { if (ua[i]) this.units.push(ua[i]); if (ub[i]) this.units.push(ub[i]); }
     this.units.forEach((u, i) => { u.uid = i; });
@@ -83,6 +87,20 @@ export class Battle {
     if (has('precip')) u.flat += tv('precip', 0, tl.precip);
     if (has('noble')) { u.nobleSh = tv('noble', 0, tl.noble) / 100; if (tl.noble >= 2) u.ccImm = true; }
     if (tl.trans && !def.mob) u.ap += tv('trans', 0, tl.trans) * (u.tr.has('trans') ? 2 : 1);
+    if (has('ionic')) u.maxHp += tv('ionic', 0, tl.ionic);
+    if (has('aromatic')) u.dr += tv('aromatic', 0, tl.aromatic) / 100;
+    if (has('alkEarth')) u.aeSh = tv('alkEarth', 0, tl.alkEarth) / 100;
+    if (has('polymer')) u.poly = tv('polymer', 0, tl.polymer) / 100;
+    // 反応の効果（1体につき RX_CAP 個まで）
+    let nrx = 0, hpPct = 0;
+    for (const r of this.rx[team]) {
+      if (r.k === 'industry' || !r.need.includes(def.id) || nrx >= RX_CAP) continue; nrx++;
+      if (r.k === 'redox') { adM += .12; u.ap += 12; } else if (r.k === 'neutral') { hpPct += .08; u.rxSh = (u.rxSh || 0) + .08; }
+      else if (r.k === 'precip') { u.armor += 20; u.mr += 20; } else if (r.k === 'gas') asM += .14; else if (r.k === 'complex') u.ap += 25;
+      else if (r.k === 'organic') u.maxHp += 200; else if (r.k === 'thermal') u.critC += .15;
+    }
+    if (!def.mob) u.mana += this.rxMana[team];
+    u.maxHp *= 1 + hpPct;
     if (md.hp) u.maxHp += md.hp; if (md.as) asM += md.as; if (md.adPct) adM += md.adPct; if (md.ap) u.ap += md.ap;
     if (md.mana) u.mana += md.mana;
     if (md.scale) { u.maxHp *= md.scale; u.ad *= md.scale; }
@@ -95,6 +113,7 @@ export class Battle {
   startFx(u) {
     const md = this.mods[u.team];
     if (u.nobleSh) this.shield(u, u.maxHp * u.nobleSh, 99);
+    if (u.rxSh) this.shield(u, u.maxHp * u.rxSh, 12);
     if (u.fx.colloid) for (const a of this.around(u.pos, 1, u.team)) this.shield(a, u.fx.colloid, 8);
     if (md.startDr) this.buff(u, 'dr', md.startDr, 8);
   }
@@ -242,7 +261,7 @@ export class Battle {
     if (u.regen) this.heal(u, u, u.maxHp * u.regen);
     if (u.fx.regenMiss) this.heal(u, u, (u.maxHp - u.hp) * u.fx.regenMiss);
     if (u.fx.haber && u.cnt.haber < 15) { u.cnt.haber++; this.buff(u, 'adp', u.fx.haber, 999); }
-    if (u.def.fl.polymer && (u.cnt.poly = (u.cnt.poly || 0) + 1) % 2 === 0) { const g = u.maxHp * 0.03; u.maxHp += g; u.hp += g; u.ad *= 1.02; }
+    if ((u.def.fl.polymer || u.poly) && (u.cnt.poly = (u.cnt.poly || 0) + 1) % 2 === 0) { const g = u.maxHp * ((u.def.fl.polymer ? .03 : 0) + (u.poly || 0)); u.maxHp += g; u.hp += g; if (u.def.fl.polymer) u.ad *= 1.02; }
   }
 
   attack(u, t) {
@@ -275,6 +294,7 @@ export class Battle {
     const sm = u.star - 1;
     sk.cast(u, this, i => sk.v[i][sm] * u.ap / 100, i => sk.v[i][sm]);
     if (u.fx.apCast) u.ap += u.fx.apCast;
+    if (u.aeSh) this.shield(u, u.maxHp * u.aeSh, 4);
   }
 
   move(u, t) {
